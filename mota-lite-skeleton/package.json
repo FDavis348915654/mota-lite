@@ -1,0 +1,9 @@
+{
+  "name": "mota-lite-logic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node validate_tables.js"
+  },
+  "_note": "仅用于 node 离线校验逻辑层/配置表；复制进 AIoT-IDE 工程时不要带本文件与 validate_tables.js"
+}

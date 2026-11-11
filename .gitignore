@@ -1,0 +1,18 @@
+# ---- 环境 / IDE ----
+.codebuddy/
+.cloudstudio
+.cloudstudio/
+.vscode/
+.idea/
+
+# ---- 依赖与构建产物 ----
+node_modules/
+__pycache__/
+*.pyc
+mota-lite/dist/
+dist/
+
+# ---- 临时文件 ----
+*.log
+.DS_Store
+Thumbs.db

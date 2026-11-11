@@ -1,0 +1,10 @@
+<script>
+export default {
+  onCreate() {
+    console.log('[mota] app created')
+  },
+  onDestroy() {
+    console.log('[mota] app destroyed')
+  }
+}
+</script>

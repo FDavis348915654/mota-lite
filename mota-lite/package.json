@@ -1,0 +1,11 @@
+{
+  "name": "mota-lite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "小米手环10 · 魔塔 Lite / Vela JS 快应用",
+  "scripts": {
+    "check": "node tools/validate_tables.js && node tools/validate_view.js"
+  },
+  "_note": "若用 AIoT-IDE 新建工程覆盖了本文件，请补回 \"type\": \"module\"，否则 tools/ 下的 node 校验脚本无法 import src/common 的 ESM 模块。tools/ 与 dist/ 不进 rpk。"
+}

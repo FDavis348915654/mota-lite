@@ -1,0 +1,53 @@
+{
+  "version": "0.12.0",
+  "sprites": {
+    "image": "assets/sprites.png",
+    "atlas": "assets/sprites.json",
+    "tile": 28,
+    "count": 39
+  },
+  "animations": [
+    "assets/hero_idle.gif",
+    "assets/slime_idle.gif"
+  ],
+  "illustration": "assets/title.png",
+  "audio": {
+    "dir": "assets/audio",
+    "files": [
+      "battle_hit.wav",
+      "bomb.wav",
+      "click.wav",
+      "door.wav",
+      "footstep.wav",
+      "hidden.wav",
+      "hurt.wav",
+      "lose.wav",
+      "pickup.wav",
+      "powerup.wav",
+      "story.wav",
+      "win.wav"
+    ]
+  },
+  "texts": {
+    "file": "texts.js",
+    "sfxKeys": [
+      "battle_hit",
+      "bomb",
+      "click",
+      "door",
+      "footstep",
+      "hidden",
+      "hurt",
+      "lose",
+      "pickup",
+      "powerup",
+      "story",
+      "win"
+    ]
+  },
+  "levels": {
+    "file": "levels/levels.json",
+    "floors": 21
+  },
+  "note": "全部由 tools/gen_assets.py 程序化生成；版本号取自 version.js、塔层数取自 levels.json；title.png 可被 AI 插画覆盖，风格需与像素精灵协调"
+}

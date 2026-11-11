@@ -1,0 +1,227 @@
+<template>
+  <div class="stage" @swipe="onSwipe">
+    <text class="hud">{{ hud }}</text>
+
+    <div class="grid">
+      <block for="c in cells">
+        <div class="cell" style="left: {{c.x}}px; top: {{c.y}}px; background-color: {{c.bg}};">
+          <text if="{{c.hasCh}}" class="cell-ch">{{c.ch}}</text>
+        </div>
+      </block>
+      <!-- 玩家高亮写在格子之后：Vela 无 z-index，靠 DOM 顺序决定层级 -->
+      <div class="hero" style="left: {{heroX}}px; top: {{heroY}}px;"></div>
+    </div>
+
+    <text class="tip">{{ tip }}</text>
+    <text class="legend">滑动四方向移动</text>
+
+    <!-- 结束遮罩必须写在最后 -->
+    <div class="over" if="{{ended}}">
+      <text class="over-title">{{ endTitle }}</text>
+      <text class="over-sub">{{ endSub }}</text>
+      <div class="btn" @click="restart"><text class="btn-text">重新开始</text></div>
+    </div>
+  </div>
+</template>
+
+<script>
+import brightness from '@system.brightness'
+import vibrator from '@system.vibrator'
+import storage from '@system.storage'
+import { CONFIG, newGame, resolveStep, buildCells, serialize, deserialize } from '../../common/logic.js'
+import { FLOORS } from '../../common/tables.js'
+
+const SAVE_KEY = 'mota_lite_save_v1'
+
+export default {
+  data: {
+    cells: [], hud: '', tip: '滑动开始爬塔',
+    heroX: 0, heroY: 0,
+    ended: false, endTitle: '', endSub: ''
+  },
+
+  onInit() {
+    this.state = null
+    this.lastVib = 0
+    this.lastHud = ''
+    this.lastEnded = undefined
+    this.booted = false
+  },
+
+  onShow() {
+    // 魔塔是盯着数值思考的慢节奏游戏，不息屏是硬要求
+    brightness.setKeepScreenOn({
+      keepScreenOn: true,
+      fail: (e) => console.log('[mota] keepScreenOn fail: ' + JSON.stringify(e))
+    })
+    // 幂等：抬腕息屏 / 切走再回来会重复触发 onShow，绝不能重新读档覆盖进度
+    if (this.booted) return
+    this.boot()
+  },
+
+  boot() {
+    storage.get({
+      key: SAVE_KEY,
+      default: '',
+      success: (data) => {
+        if (this.booted) return
+        this.booted = true
+        this.state = deserialize(data) || newGame()
+        this.render()
+      },
+      fail: () => {
+        if (this.booted) return
+        this.booted = true
+        this.state = newGame()
+        this.render()
+      }
+    })
+  },
+
+  onHide() { this.save() },
+  onDestroy() { this.save() },
+
+  // ---------- 唯一输入入口 ----------
+  onSwipe(e) {
+    if (this.ended || !this.state) return
+    if (!e || !e.direction) return
+    this.step(e.direction)
+  },
+
+  step(dir) {
+    const r = resolveStep(this.state, dir)
+    this.state = r.state
+    this.handleEvents(r.events)
+    this.render()
+  },
+
+  handleEvents(events) {
+    let dirty = false
+    let lastMsg = ''
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]
+      if (ev.t === 'msg') lastMsg = ev.text
+      else if (ev.t === 'vibrate') this.vibrate()
+      else if (ev.t === 'save') dirty = true
+    }
+    if (lastMsg) this.tip = lastMsg
+    if (dirty) this.save()   // 节流：只有逻辑层标记过的关键节点才写盘
+  },
+
+  vibrate() {
+    const now = Date.now()
+    if (now - this.lastVib < CONFIG.VIBRATE_GAP) return
+    this.lastVib = now
+    vibrator.vibrate({ mode: 'short', fail: () => {} })
+  },
+
+  save() {
+    if (!this.state) return
+    storage.set({ key: SAVE_KEY, value: serialize(this.state), fail: () => {} })
+  },
+
+  // ---------- 唯一渲染提交 ----------
+  // 视图只反映 state：结束遮罩也由 state.ended 驱动，保证读档到「已通关」存档时仍能复原
+  render() {
+    const s = this.state
+    if (!s) return
+    this.cells = buildCells(s)   // 整表赋值：Vela 监听不到数组元素内部属性变更
+    this.heroX = s.x * CONFIG.CELL
+    this.heroY = s.y * CONFIG.CELL
+
+    const h = s.hero
+    const hud = FLOORS[s.floor].name + '  HP' + h.hp + '  A' + h.atk + ' D' + h.def + '  Y' + h.keys.y
+    if (hud !== this.lastHud) { this.hud = hud; this.lastHud = hud }
+
+    if (s.ended !== this.lastEnded) {
+      this.lastEnded = s.ended
+      this.ended = !!s.ended
+      if (s.ended === 'win')  { this.endTitle = '通关'; this.endSub = '魔王已被击败' }
+      if (s.ended === 'dead') { this.endTitle = '阵亡'; this.endSub = '重新开始' }
+    }
+  },
+
+  restart() {
+    this.state = newGame()
+    this.lastHud = ''
+    this.lastEnded = undefined
+    this.ended = false
+    this.endTitle = ''
+    this.endSub = ''
+    this.tip = '滑动开始爬塔'
+    this.render()
+    this.save()   // 立刻写新档，避免「重开后马上切走」又读回旧存档
+  }
+}
+</script>
+
+<style>
+.stage {
+  position: relative;
+  width: 212px;
+  height: 520px;
+  background-color: #0b1017;
+}
+.hud {
+  position: absolute;
+  left: 8px; top: 40px;
+  width: 196px;
+  font-size: 14px;
+  color: #90a4ae;
+  text-align: center;
+}
+.grid {
+  position: absolute;
+  left: 8px; top: 88px;
+  width: 196px; height: 252px;
+}
+.cell {
+  position: absolute;
+  width: 28px; height: 28px;
+  border: 1px solid #0b1017;
+  justify-content: center;
+  align-items: center;
+}
+.cell-ch { font-size: 14px; color: #ffffff; }
+.hero {
+  position: absolute;
+  width: 28px; height: 28px;
+  border: 2px solid #ffeb3b;
+}
+.tip {
+  position: absolute;
+  left: 8px; top: 348px;
+  width: 196px; height: 48px;
+  font-size: 14px;
+  color: #ffd54f;
+  text-align: center;
+}
+.legend {
+  position: absolute;
+  left: 8px; top: 404px;
+  width: 196px;
+  font-size: 14px;
+  color: #546e7a;
+  text-align: center;
+}
+.over {
+  position: absolute;
+  left: 0; top: 0;
+  width: 212px; height: 520px;
+  background-color: rgba(0, 0, 0, 0.88);
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.over-title { font-size: 22px; color: #ffd54f; }
+.over-sub   { margin-top: 8px; font-size: 14px; color: #ffffff; }
+.btn {
+  margin-top: 24px;
+  width: 112px; height: 40px;
+  background-color: #263238;
+  border-radius: 20px;
+  justify-content: center;
+  align-items: center;
+}
+.btn-text { font-size: 15px; color: #4dd0e1; }
+</style>

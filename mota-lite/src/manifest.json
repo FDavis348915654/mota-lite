@@ -1,0 +1,24 @@
+{
+  "package": "com.yourname.motalite",
+  "name": "腕上魔塔",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "minPlatformVersion": 1200,
+  "icon": "/common/logo.png",
+  "deviceTypeList": ["watch"],
+  "features": [
+    { "name": "system.vibrator" },
+    { "name": "system.brightness" },
+    { "name": "system.storage" }
+  ],
+  "config": {
+    "logLevel": "debug",
+    "designWidth": 212
+  },
+  "router": {
+    "entry": "pages/index",
+    "pages": {
+      "pages/index": { "component": "index" }
+    }
+  }
+}

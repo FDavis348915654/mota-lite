@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>腕上魔塔 Lite · 在线试玩</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="page-head">
+      <h1>腕上魔塔 <span>Lite</span> <em class="title-version" id="titleVersion"></em></h1>
+      <p id="headSub">—</p>
+      <p class="tagline" id="tagline"></p>
+      <span class="mode-badge" id="modeBadge">正常游玩</span>
+      <button class="head-newgame" id="btnNewGameTop">—</button>
+    </header>
+
+    <main class="layout">
+      <section class="device-col" id="deviceCol">
+        <div class="device" id="device">
+          <div class="crown"></div>
+          <div class="screen" id="screen">
+            <div class="statusbar"><span>9:41</span><span>MOTA</span></div>
+            <!-- v0.12：HUD 拆成 3 行（楼层名 / HP·攻·防 / 三色钥匙·金币），
+                 每行都有足够宽度把字号放大到 15/14/13px，适配 212×520 手环屏。 -->
+            <div class="hud" id="hud">
+              <div class="hud-row hud-row-title">
+                <span class="hud-floor" id="hudFloor">1F</span>
+              </div>
+              <div class="hud-row">
+                <span class="hud-hp" id="hudHp">HP200</span>
+                <span class="hud-atk" id="hudAtk">A10</span>
+                <span class="hud-def" id="hudDef">D10</span>
+              </div>
+              <div class="hud-row hud-row-sub">
+                <span class="hud-ky" id="hudKy">Y0</span>
+                <span class="hud-kb" id="hudKb">B0</span>
+                <span class="hud-kr" id="hudKr">R0</span>
+                <span class="hud-gold" id="hudGold">G0</span>
+              </div>
+            </div>
+            <!-- v0.8：整层 13×15 = 195 个固定槽位全部渲染，.viewport 只裁出 7×9 一屏；
+                 .grid / .fx-layer 由 app.js 按英雄位置做 translate 跟随，节点数恒定不增删。 -->
+            <div class="viewport" id="viewport">
+              <div class="grid" id="grid"></div>
+              <div class="fx-layer" id="fxLayer"></div>
+            </div>
+            <div class="tip" id="tip">滑动开始爬塔</div>
+
+            <!-- 方向键已移除：直接点击格子移动，见 app.js gridEl click + findPath。
+                 实体格（道具 / 怪物 / 商店 / NPC）必须点它本身才会交互，寻路不穿越。 -->
+            <div class="action-bar" id="actionBar">
+              <button class="action-btn" id="btnActFlyUp"    title="飞行器 · 升一层（只能去已探索的楼层）">—</button>
+              <button class="action-btn" id="btnActFlyDown"  title="飞行器 · 降一层（只能去已探索的楼层）">—</button>
+              <button class="action-btn" id="btnActBomb"     title="引爆炸弹">—</button>
+              <button class="action-btn" id="btnActShop"     title="向商人购买">—</button>
+              <button class="action-btn act-codex" id="btnActCodex" title="怪物图鉴（需先拾取图鉴）">—</button>
+              <button class="action-btn act-newgame" id="btnActNewGame" title="开始新游戏（覆盖当前存档）">—</button>
+              <button class="action-btn act-settings" id="btnActSettings" title="设置">—</button>
+              <span class="action-hint" id="actionHint">—</span>
+            </div>
+
+            <div class="over" id="over" hidden>
+              <div class="over-title" id="overTitle">通关</div>
+              <div class="over-sub" id="overSub"></div>
+              <button class="over-btn" id="overBtn">—</button>
+            </div>
+
+            <div class="story-layer" id="storyLayer" hidden>
+              <div class="story-card">
+                <div class="story-art"></div>
+                <div class="story-title" id="storyTitle"></div>
+                <div class="story-body" id="storyBody"></div>
+                <div class="story-actions" id="storyActions"></div>
+                <button class="story-continue" id="storyContinue"></button>
+              </div>
+            </div>
+
+            <div class="settings-layer" id="settingsLayer" hidden>
+              <div class="settings-card">
+                <div class="settings-title" id="settingsTitle">—</div>
+                <button class="settings-item" id="setSprite">—</button>
+                <button class="settings-item" id="setAnim">—</button>
+                <button class="settings-item" id="setSound">—</button>
+                <button class="settings-item settings-danger" id="setNewGame">—</button>
+                <button class="settings-close" id="settingsClose">—</button>
+              </div>
+            </div>
+
+            <!-- v0.8 怪物图鉴：持有宝物「图鉴」后打开，列出当前层所有存活怪物类型的
+                 HP / 攻 / 防 / 金币，并用 calcBattle() 预测能不能打、要掉多少血。 -->
+            <div class="codex-layer" id="codexLayer" hidden>
+              <div class="codex-card">
+                <div class="codex-title" id="codexTitle">—</div>
+                <div class="codex-sub" id="codexSub">—</div>
+                <div class="codex-list" id="codexList"></div>
+                <button class="codex-close" id="codexClose">—</button>
+              </div>
+            </div>
+
+            <!-- 通用二次确认：危险操作（新游戏 / 清除存档 / 载入存档 / 清除记录）统一走这里，
+                 不使用 window.confirm，键盘与遮罩点击可取消，打开期间挡住游戏输入。 -->
+            <div class="confirm-layer" id="confirmLayer" hidden>
+              <div class="confirm-card">
+                <div class="confirm-title" id="confirmTitle">—</div>
+                <div class="confirm-body" id="confirmBody">—</div>
+                <div class="confirm-btns">
+                  <button class="confirm-ok" id="confirmOk">—</button>
+                  <button class="confirm-cancel" id="confirmCancel">—</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="device-caption">屏幕一屏 7×9，整层 13×15 = <code>buildCells(state)</code> 的定长输出</p>
+        <div class="zoom-row">
+          <span>屏幕缩放</span>
+          <button data-zoom="0.5">0.5×</button>
+          <button data-zoom="1" class="on">1×</button>
+          <button data-zoom="1.25">1.25×</button>
+          <button data-zoom="1.5">1.5×</button>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="card wide">
+          <h2>攻略回放 <span class="h2-note">逐帧确认每一步效果</span></h2>
+          <div class="replay-head"><span id="replayInfo">未载入路线</span></div>
+          <div class="progress"><div class="progress-fill" id="replayBar"></div></div>
+          <div class="route" id="routeStrip"><span class="dim">路线步骤条将在载入后生成</span></div>
+          <div class="btn-row">
+            <button id="btnReplay" class="primary">载入通关攻略</button>
+            <button id="btnPlay" disabled>▶ 播放</button>
+            <button id="btnPrev" disabled>⏮ 上一步</button>
+            <button id="btnNext" disabled>下一步 ⏭</button>
+            <button id="btnExit" disabled>退出回放并恢复</button>
+          </div>
+          <div class="speed-row">
+            <span>播放速度</span>
+            <button data-speed="640">0.5×</button>
+            <button data-speed="320" class="on">1×</button>
+            <button data-speed="160">2×</button>
+            <button data-speed="80">4×</button>
+            <span class="dim" id="speedInfo">320 ms / 步</span>
+          </div>
+          <p class="log" id="log">就绪。</p>
+        </div>
+
+        <div class="card">
+          <h2>怎么玩</h2>
+          <p id="helpControls"></p>
+          <p id="helpKeys"></p>
+          <p class="dim" id="helpRule"></p>
+          <p class="dim" id="helpOptional"></p>
+        </div>
+
+        <div class="card">
+          <h2>当前状态</h2>
+          <div class="kv"><span>楼层 / 坐标</span><b id="iPos">—</b></div>
+          <div class="kv"><span>HP / 攻 / 防</span><b id="iHero">—</b></div>
+          <div class="kv"><span>黄钥匙 / 金币</span><b id="iKeys">—</b></div>
+          <div class="kv"><span>已走步数</span><b id="iSteps">0</b></div>
+          <div class="kv"><span>存档体积</span><b id="iSaveSize">—</b></div>
+          <div class="save-bar"><div class="save-bar-fill" id="saveBarFill"></div></div>
+          <p class="dim" id="saveHint"></p>
+          <p class="dim">存档串（点击复制）：</p>
+          <code class="save-str" id="savePreview" title="点击复制">—</code>
+        </div>
+
+        <div class="card">
+          <h2>道具与能力 <span class="h2-note">可选捷径</span></h2>
+          <div class="kv"><span>飞行器</span><b id="iFly">0</b></div>
+          <div class="kv"><span>炸弹</span><b id="iBomb">0</b></div>
+          <div class="kv"><span>金币</span><b id="iGold">0</b></div>
+          <div class="btn-row">
+            <button id="btnFlyUp">↑ 升一层</button>
+            <button id="btnFlyDown">↓ 降一层</button>
+            <button id="btnBomb">引爆炸弹</button>
+            <button id="btnShop">向商人购买</button>
+          </div>
+          <p class="dim" id="abilityHint"></p>
+        </div>
+
+        <div class="card">
+          <h2>战斗预览 <span class="h2-note">calcBattle 实时算</span></h2>
+          <p class="dim">按当前属性，现在打本层存活怪物的结果：</p>
+          <div id="battleList" class="battle-list">—</div>
+        </div>
+
+        <div class="card">
+          <h2>图例 <span class="h2-note">由 tables.js 生成</span></h2>
+          <div id="legend" class="legend"></div>
+        </div>
+
+        <div class="card">
+          <h2>通关记录 <span class="h2-note">独立于存档，回放不写入</span></h2>
+          <div class="kv"><span>到达最高层</span><b id="recBestFloor">—</b></div>
+          <div class="kv"><span>最少通关步数</span><b id="recMinSteps">—</b></div>
+          <div class="kv"><span>累计通关次数</span><b id="recWins">—</b></div>
+          <p class="dim" id="recHint"></p>
+          <div class="btn-row">
+            <button id="btnClearRecords">清除记录</button>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <h2>美术与音效资源 <span class="h2-note" id="assetNote"></span></h2>
+          <div class="switch-row">
+            <button id="btnSprite" class="on">像素图</button>
+            <button id="btnAnim" class="on">战斗动画：开</button>
+            <button id="btnSound" class="on">音效：开</button>
+          </div>
+          <div class="asset-row">
+            <figure><img src="./assets/hero_idle.gif" alt="英雄待机动画"><figcaption>英雄 · 待机 GIF</figcaption></figure>
+            <figure><img src="./assets/slime_idle.gif" alt="史莱姆跳动动画"><figcaption>史莱姆 · 跳动 GIF</figcaption></figure>
+            <figure><img class="art-title" src="./assets/title.png" alt="塔景插画"><figcaption>塔景插画 · 剧情背景</figcaption></figure>
+            <figure><img class="art-sheet" src="./assets/sprites.png" alt="像素精灵表"><figcaption>32 帧精灵表</figcaption></figure>
+          </div>
+          <div class="sfx-row" id="sfxRow"></div>
+        </div>
+
+        <div class="card wide">
+          <h2>存档工作台 <span class="h2-note">自动存档 · 单槽</span></h2>
+          <p class="dim" id="saveSlotNote"></p>
+          <p class="dim">粘贴存档串用 <code>deserialize()</code> 复原进度；兼容 v1 旧档，坏档安全返回 null。</p>
+          <div class="import-row">
+            <input id="saveInput" type="text" spellcheck="false" placeholder="2|0,1,7,200,10,10,0,0,0,0,0,0,0|">
+            <button id="btnImport">载入存档</button>
+          </div>
+          <div class="btn-row">
+            <button id="btnRestart">重新开始</button>
+            <button id="btnClear">清除存档</button>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <h2>事件流水 <span class="h2-note">每步一条 · 真实事件 + 移动</span></h2>
+          <ol class="event-list" id="eventList"></ol>
+        </div>
+
+        <div class="card wide">
+          <h2>架构说明 <span class="h2-note">关卡表外置 · 逻辑层单一真源</span></h2>
+          <p id="archText"></p>
+          <p class="dim" id="archSub"></p>
+        </div>
+
+        <div class="card wide">
+          <h2>版本记录 <span class="h2-note">每次改动递增 version.js · 标题自动同步</span></h2>
+          <ol class="version-log" id="versionLog"></ol>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="page-foot">
+      <span id="footVersion"></span><br>
+      <span id="footNote"></span>
+    </footer>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
