@@ -1,6 +1,6 @@
 # mota-lite · 腕上魔塔
 
-经典魔塔（Dungeon RPG）复刻 Lite：**21 层 × 13×15 大地图、8 种怪物、暗门 / 铁门 / 三色钥匙经济、打怪经验与法师兑换、盗贼任务线与 16F 封印门、炸弹中后期解锁、图鉴 / 飞行器 / 商店**。
+经典魔塔（Dungeon RPG）复刻 Lite：**21 层 × 13×15 大地图、隔间走廊与死胡同宝库、9 种怪物（含强度超前 9 层的「宝库守卫」）、暗门 / 铁门 / 三色钥匙经济、打怪经验与法师兑换、盗贼任务线与 16F 封印门、炸弹中后期解锁、图鉴 / 飞行器 / 商店**。
 纯静态前端，零构建、零外部素材依赖 —— 像素图集由 Python 脚本程序化生成，音效为 8-bit WAV。
 
 > A lightweight remake of the classic Magic Tower (魔塔) dungeon RPG. All art is procedurally generated and SFX are tiny 8-bit WAVs — no binary asset packs, no build step.
@@ -13,17 +13,17 @@
 
 | 路径 | 说明 |
 |---|---|
-| `mota-lite-web/` | **在线试玩版工程本体**（当前主力，v0.13.1） |
-| `mota-lite-web/logic.js` | 逻辑层纯函数：移动 / 战斗 / 门 / 暗门 / 商店 / 经验 / 盗贼任务线 / 存档序列化，零 DOM，可被 Node 直接 import |
-| `mota-lite-web/tables.js` | 由 `levels.json` 生成的配置表（FLOORS / MONSTERS / ITEMS / DOOR_COST / SECRET…） |
+| `mota-lite-web/` | **在线试玩版工程本体**（当前主力，v0.14.0） |
+| `mota-lite-web/logic.js` | 逻辑层纯函数：移动 / 战斗 / 门 / 暗门 / 商店 / 经验 / 盗贼任务线 / 逐层强度 `scaleShift` / 存档序列化，零 DOM，可被 Node 直接 import |
+| `mota-lite-web/tables.js` | 由 `levels.json` 生成的配置表（FLOORS / MONSTERS / ITEMS / DOOR_COST / SECRET / FLOOR_SCALE…） |
 | `mota-lite-web/solver.js` | 攻略求解器：可解性验证 + 攻略回放 + 点击寻路共用 |
-| `mota-lite-web/levels/levels.json` | 21 层关卡的唯一数据源（含暗门 A / 铁门 G / 封印门 Z / 老者 E / 任务道具 j q / SECRET 奖励，`meta.schema=5`） |
-| `mota-lite-web/assets/` | 程序化生成的图集（43 帧）与 12 个 8-bit WAV |
+| `mota-lite-web/levels/levels.json` | 21 层关卡的唯一数据源（含隔间墙 / 强敌宝库 `X` / 暗门 `A` / 铁门 `G` / 封印门 `Z` / 老者 `E` / 任务道具 `j q` / SECRET 奖励 / 30 组 FLOOR_SCALE，`meta.schema=6`） |
+| `mota-lite-web/assets/` | 程序化生成的图集（44 帧，含 `elite`）与 12 个 8-bit WAV |
 | `mota-lite-web/tools/` | 关卡生成、导表、资源生成、四套离线校验、真实 Chromium 回归 |
 | `mota-lite/` | 手环端 M1 快应用工程（小米手环 10 / Vela，真机暂缓，**已冻结**） |
 | `mota-lite-skeleton/` | 最早期逻辑骨架留档 |
-| `小米手环10-魔塔Lite开发方案.md` | 移植到小米手环 10（Vela 快应用）的方案文档（附 O 记录 v0.13.0，附 P 记录 v0.13.1） |
-| `魔塔Lite-开发盘点.md` | 逐版本开发盘点与当前状态（0-K 为最新） |
+| `小米手环10-魔塔Lite开发方案.md` | 移植到小米手环 10（Vela 快应用）的方案文档（附 O 记录 v0.13.0，附 P 记录 v0.13.1，附 Q 记录 v0.14.0） |
+| `魔塔Lite-开发盘点.md` | 逐版本开发盘点与当前状态（0-L 为最新） |
 | `开发注意事项.md` | **协作与开发流程约定的单一真源**（沟通、方案确认、版本、测试分级、备份口令、工程边界） |
 | `README.md` | 本文件 |
 | `LICENSE` | MIT |
@@ -64,8 +64,9 @@ python3 -m http.server 8765
 - **经验与法师兑换**：打怪同时获得金币与经验，`monsterExp = 基础 exp × (楼层档+1)`（1~7F×1 / 8~14F×2 / 15~21F×3，全塔约 905 EXP）；8F 救出法师后常驻，用 `30 EXP` 换 `+3攻 / +3防 / +100HP`。
 - **盗贼任务线**：15F 救出盗贼 → 13F 取锁匠工具 `j` 交他（远程开 16F 封印门）→ 19F 取钱袋 `q` 交他 → 盗贼给谢礼后离塔。法师 / 盗贼救出后都成为可反复对话的常驻格。
 - **炸弹中后期化**：12F 房间救出老者 `E` 后解锁炸弹能力并赠 1 枚，之后商店第 5 项才可买（30G）；此前炸弹按钮隐藏、商店无此项。
+- **强敌宝库（v0.14）**：地图用隔间墙分出走廊与死胡同，怪物和道具都更密（空地占比 57.5%→44.4%）；**3F / 9F / 14F / 18F** 各有一间墙围石室，唯一入口由「宝库守卫 `X`」把守。它按 `FLOOR_SCALE[floor+9]` 取超前 9 层强度，首次进层必定「破不了防 / 会阵亡」，撞上去会被拦住并弹一次「暂不可敌」引导，不白送命。纯支线不挡主路 —— 先往上闯攒够攻防 / 经验再回来打，打赢后清成地板才能进去取铁剑 `s` 与铁盾 `S`；终局裸属性回头四只全部可打。
 - **战斗公式**：经典先手制，`回合数 = ceil(敌HP / (我攻-敌防))`，承受 `回合数-1` 次反击；法师系 `pierce` 无视防御；怪物手册给出「临界攻击」与「每 +1 防少掉多少 HP」。
-- **逐层数值曲线**：每层独立 `FLOOR_SCALE`，怪 ATK 55→263 单调爬坡，保证 21/21 层都有掉血压力。
+- **逐层数值曲线**：每层独立 `FLOOR_SCALE`（21 组逐层 + 9 组线性外推，共 30 组），逐层怪 ATK 55→258 单调爬坡，保证 21/21 层都有掉血压力；外推段专供强敌 `scaleShift` 取「超前层」数值，不会退化成当层就能打。
 - **收集**：三色钥匙、血瓶、宝石、飞行器、炸弹、怪物图鉴（含每层清剿标注）、NPC 房间事件。
 
 ## 开发
@@ -77,14 +78,14 @@ python3 tools/make_levels.py        # 重新生成 levels/levels.json（改关�
 python3 tools/build_tables.py       # levels.json -> tables.js；--check 只校验一致性
 python3 tools/gen_assets.py         # 重新生成图集 / 音频 / manifest.json（改美术后跑）
 
-node tools/validate_version.mjs     # 版本 / 布局 / 字号断言（87 项）
-node tools/validate_levels.mjs      # 关卡语义断言（83 项）
-node tools/validate_logic.mjs       # 逻辑层断言（423 项）
-node tools/validate_assets.mjs      # 资源断言（92 项）
-node tools/browser_check.mjs        # 真实 Chromium 回归（314 项，需先起 http.server 8765）
+node tools/validate_version.mjs     # 版本 / 布局 / 字号断言（95 项）
+node tools/validate_levels.mjs      # 关卡语义断言（92 项）
+node tools/validate_logic.mjs       # 逻辑层断言（432 项）
+node tools/validate_assets.mjs      # 资源断言（95 项）
+node tools/browser_check.mjs        # 真实 Chromium 回归（329 项，需先起 http.server 8765）
 ```
 
-全套合计 **999 项断言**（离线四套 + 导表一致性 + 真实浏览器回归）。
+全套合计 **1043 项断言**（离线四套 + 导表一致性 + 真实浏览器回归）。
 
 改完**必须递增版本号**，否则标题 / 页脚 / 版本记录会漂移：
 
@@ -122,11 +123,11 @@ git pull --rebase        # 或简写 git sync（已设别名）
 | `.vscode/`、`.idea/`、`.DS_Store`、`Thumbs.db` | 编辑器与系统文件 |
 | `*.log` | 临时日志 |
 
-`mota-lite-web/tools/_bak/`（v7 / v11 / v12 的关卡与 tables 备份）**保留在仓库里**：它们是回归对照与回滚依据。
+`mota-lite-web/tools/_bak/`（v7 / v11 / v12 / v13 的关卡与 tables 备份）**保留在仓库里**：它们是回归对照与回滚依据。
 
 ## 版本
 
-当前 **v0.13.1**。完整变更记录（每个版本改了什么、数值怎么定的）见 `mota-lite-web/version.js` 的 `CHANGELOG` 与 `魔塔Lite-开发盘点.md`（0-J / 0-K 段）。
+当前 **v0.14.0**。完整变更记录（每个版本改了什么、数值怎么定的）见 `mota-lite-web/version.js` 的 `CHANGELOG` 与 `魔塔Lite-开发盘点.md`（0-L 段）。
 
 ## 仓库用途
 

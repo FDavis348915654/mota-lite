@@ -251,8 +251,31 @@ ok('app.js 给常驻交易弹层加 persistent 类',
 ok('browser_check.mjs 有打字机期间坐标恒定专项',
   browserCheck.includes('v0.13.1 打字机期间卡片高度恒定') &&
   browserCheck.includes('v0.13.1 打字机期间商品按钮坐标恒定'))
-ok('CHANGELOG 首条为 v0.13.1 且说明界面伸缩 / 误选',
-  CHANGELOG[0].v === 'v0.13.1' && CHANGELOG[0].note.includes('界面伸缩') &&
-  CHANGELOG[0].note.includes('误选'))
+// v0.14 成为首条，v0.13.1 patch 记录改为「存在该条目」（同 v0.13.0 的处理）
+const c131 = CHANGELOG.find(c => c.v === 'v0.13.1')
+ok('CHANGELOG 有 v0.13.1 且说明界面伸缩 / 误选',
+  !!c131 && c131.note.includes('界面伸缩') && c131.note.includes('误选'))
+ok('CHANGELOG 首条为 v0.14.0 且说明关卡设计深度 / 强敌 / scaleShift',
+  CHANGELOG[0].v === 'v0.14.0' && CHANGELOG[0].note.includes('关卡设计深度') &&
+  CHANGELOG[0].note.includes('强敌') && CHANGELOG[0].note.includes('scaleShift'))
 
+// ---- v0.14 关卡设计深度：静态防漂移 ----
+const genPy = read('tools/make_levels.py')
+ok('make_levels.py 有隔间 / 宝库 / 精英常量',
+  genPy.includes('def add_corridors') && genPy.includes('def add_vault') &&
+  genPy.includes('ELITE_FLOORS') && genPy.includes('ELITE_SHIFT'))
+ok('logic.js scaledMon 支持 scaleShift',
+  read('logic.js').includes('mon.scaleShift || 0'))
+ok('solver.js 禁止把楼梯当通路 + 换层后终止路径',
+  read('solver.js').includes("ch === 'U' || ch === 'D'") &&
+  read('solver.js').includes('s.floor !== beforeFloor'))
+ok('texts.js 有精英引导与 m9 描述',
+  read('texts.js').includes('elite_hint') && read('texts.js').includes('m9:'))
+ok('app.js 首次撞 X 弹引导',
+  app.includes("beforeTile === 'X' && progressed"))
+ok('gen_assets.py 有 elite 帧与 X 映射',
+  read('tools/gen_assets.py').includes('draw_elite') &&
+  read('tools/gen_assets.py').includes("'X': 'elite'"))
+ok('browser_check.mjs 有 v0.14 端到端专项',
+  browserCheck.includes('v0.14 强敌'))
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

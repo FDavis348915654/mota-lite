@@ -424,6 +424,22 @@ def draw_door_seal():
     return im
 
 
+def draw_elite():
+    """v0.14 宝库守卫 X：重甲 + 金冠 + 胸珠，橙红配色提示「强敌，暂不可敌」。"""
+    im, d = tile((27, 36, 48, 255))
+    P(d, [(3, 24), (5, 9), (10, 5), (18, 5), (23, 9), (25, 24)], (120, 42, 30, 255))
+    R(d, [7, 9, 21, 23], (198, 84, 48, 255), (96, 34, 24, 255))
+    R(d, [9, 11, 19, 20], (239, 124, 71, 255))
+    R(d, [9, 3, 19, 11], (150, 60, 40, 255), (96, 34, 24, 255))
+    R(d, [11, 5, 17, 9], (40, 30, 34, 255))
+    for x in (9, 14, 19):
+        d.line([(x, 0), (x, 4)], fill=(255, 213, 79, 255), width=2)
+    R(d, [11, 6, 13, 7], (255, 213, 79, 255))
+    R(d, [15, 6, 17, 7], (255, 213, 79, 255))
+    E(d, [12, 13, 16, 17], (255, 213, 79, 255), (255, 245, 190, 255))
+    return im
+
+
 # ---------------- 特效 ----------------
 def draw_fx_hit():
     im, d = tile()
@@ -468,6 +484,7 @@ SPRITES = [
     ('codex', draw_codex), ('npc_mage', draw_npc_mage), ('npc_thief', draw_npc_thief),
     ('npc_elder', draw_npc_elder), ('lockpick', draw_lockpick),
     ('moneybag', draw_moneybag), ('door_seal', draw_door_seal),
+    ('elite', draw_elite),
     ('fx_hit', draw_fx_hit), ('fx_boom', draw_fx_boom), ('fx_pick', draw_fx_pick),
 ]
 
@@ -486,7 +503,9 @@ TILE_MAP = {
     '6': 'm6', '7': 'm7', '8': 'm8',
     'U': 'up', 'D': 'down', 'W': 'throne', 'N': 'shop', 'H': 'hidden',
     'I': 'codex', 'M': 'npc_mage', 'T': 'npc_thief',
-    'E': 'npc_elder', 'j': 'lockpick', 'q': 'moneybag', 'Z': 'door_seal'
+    'E': 'npc_elder', 'j': 'lockpick', 'q': 'moneybag', 'Z': 'door_seal',
+    # v0.14：宝库守卫（精英怪，强度超前 9 层），独立帧避免回退成色块
+    'X': 'elite'
 }
 
 cols = 8

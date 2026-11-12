@@ -95,8 +95,13 @@ ok('doorKey 的 key 都是小写钥匙字符', Object.values(data.doorKey).every
 
 // ---- v0.9：逐层强度曲线 / 分层怪种 / 主题接线 ----
 console.log('\n=== 1b. v0.9 数值曲线 ===')
-ok('floorScale 恰好 21 组', Array.isArray(data.floorScale) && data.floorScale.length === 21,
+// v0.14：前 21 组逐层标准怪 + 9 组线性外推，供精英怪 scaleShift 取「超前层」数值。
+ok('floorScale = 21 逐层 + 9 外推 = 30 组',
+  Array.isArray(data.floorScale) && data.floorScale.length === 30,
   data.floorScale.length + ' 组')
+ok('外推段 hp/atk 严格递增、def 不回落（高层精英不退化）',
+  data.floorScale.slice(21).every((s, i, a) => i === 0 ||
+    (s.hp > a[i - 1].hp && s.atk > a[i - 1].atk && s.def >= a[i - 1].def)))
 ok('每组含 hp/atk/def 且为正数', data.floorScale.every(s =>
   Number.isFinite(s.hp) && Number.isFinite(s.atk) && Number.isFinite(s.def) &&
   s.hp > 0 && s.atk > 0 && s.def >= 0))
@@ -104,8 +109,8 @@ ok('怪 ATK 逐层单调递增（修 100% 零伤根因）',
   data.floorScale.every((s, i) => i === 0 || s.atk >= data.floorScale[i - 1].atk),
   data.floorScale[0].atk + ' → ' + data.floorScale[20].atk)
 ok('怪 HP 逐层不递减', data.floorScale.every((s, i) => i === 0 || s.hp >= data.floorScale[i - 1].hp))
-ok('8 种怪、字符 1-8 全有对应', data.monsters.length === 8 &&
-  '12345678'.split('').every(ch => data.monsters.some(m => m.ch === ch)),
+ok('9 种怪、字符 1-8 + X 全有对应', data.monsters.length === 9 &&
+  '12345678X'.split('').every(ch => data.monsters.some(m => m.ch === ch)),
   data.monsters.map(m => m.ch + ':' + m.name).join(' '))
 ok('存在 pierce 真实伤害怪', data.monsters.some(m => m.pierce))
 ok('魔王 noScale（终局独立数值）', (() => {
@@ -188,7 +193,7 @@ console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封�
 const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
 const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
 const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
-ok('meta.schema 升到 5', data.meta.schema === 5, String(data.meta.schema))
+ok('meta.schema 升到 6', data.meta.schema === 6, String(data.meta.schema))
 ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
   floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
 ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
@@ -242,5 +247,48 @@ ok('生成器输出与现有 tables.js 字节一致', gen === read('tables.js'),
 ok('生成器确定性（连续两次输出相同）',
   gen === execFileSync('python3', ['tools/build_tables.py', '--stdout'], { cwd: root, encoding: 'utf8' }))
 
+// ---- 1f. v0.14 关卡设计深度：隔间 / 加密实体 / 强敌守宝库 ----
+console.log('\n=== 1f. v0.14 关卡设计深度 ===')
+const cntCh = (f, ch) => f.rows.join('').split(ch).length - 1
+const allOf = ch => data.floors.reduce((n, f) => n + cntCh(f, ch), 0)
+const eliteFloorNums = data.floors.map((f, i) => cntCh(f, 'X') > 0 ? i + 1 : 0).filter(Boolean)
+ok('强敌 X 恰好 4 处且分布 3/9/14/18F',
+  allOf('X') === 4 && JSON.stringify(eliteFloorNums) === JSON.stringify([3, 9, 14, 18]),
+  eliteFloorNums.join(','))
+const ROOM_1B = [2, 4, 6, 8, 11, 12, 13, 15, 17, 19]
+ok('4 处强敌都在开放层，与普通怪同层混放（不设独立挑战层）',
+  eliteFloorNums.every(n => !ROOM_1B.includes(n)))
+const vaultSpots = []
+data.floors.forEach((f, i) => f.rows.forEach((row, y) => {
+  for (let x = 0; x < row.length; x++) if (row[x] === 'X') vaultSpots.push({ f: i + 1, x, y, rows: f.rows })
+}))
+ok('每处宝库布局正确：X 上方 2 格 s/S，四周砌 7 面墙成死胡同',
+  vaultSpots.length === 4 && vaultSpots.every(e => {
+    const r = e.rows
+    return r[e.y - 1]?.[e.x] === 's' && r[e.y - 1]?.[e.x + 1] === 'S' &&
+      [[-1, -1], [2, -1], [-1, 0], [1, 0], [2, 0], [0, -2], [1, -2]]
+        .every(([dx, dy]) => r[e.y + dy]?.[e.x + dx] === '#')
+  }))
+ok('每处宝库外围有可走格接入（纯支线，不封死）',
+  vaultSpots.every(e => '.@HUDW'.includes(e.rows[e.y + 1]?.[e.x] || '#')))
+const dotTotal = data.floors.reduce((n, f) => n + cntCh(f, '.'), 0)
+ok('空地占比降到 50% 以下（地图不再空荡荡）', dotTotal / (21 * 13 * 15) < 0.5,
+  (dotTotal / (21 * 13 * 15) * 100).toFixed(1) + '%')
+ok('前 20 层普通怪 >= 5 只（原 2~3）',
+  data.floors.slice(0, 20).every(f =>
+    '1245678'.split('').reduce((n, c) => n + cntCh(f, c), 0) >= 5))
+ok('隔间墙生效：每层内墙数 >= 55',
+  data.floors.slice(0, 20).every(f => cntCh(f, '#') >= 55),
+  '最少 ' + Math.min(...data.floors.map(f => cntCh(f, '#'))))
+const WALK_CH = '.@HUDW'
+ok('每处暗门 A 至少有一个真正可走的邻格（非墙非实体）',
+  data.floors.every(f => {
+    const r = f.rows; let a = null
+    for (let y = 0; y < r.length; y++) for (let x = 0; x < r[0].length; x++) if (r[y][x] === 'A') a = { x, y }
+    return a && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+      const c = r[a.y + dy]?.[a.x + dx]
+      return c && WALK_CH.includes(c)
+    })
+  }))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

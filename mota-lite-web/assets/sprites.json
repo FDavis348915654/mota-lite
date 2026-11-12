@@ -5,7 +5,7 @@
   "rows": 6,
   "width": 224,
   "height": 168,
-  "count": 43,
+  "count": 44,
   "frames": {
     "wall": {
       "x": 0,
@@ -247,20 +247,26 @@
       "w": 28,
       "h": 28
     },
-    "fx_hit": {
+    "elite": {
       "x": 0,
       "y": 140,
       "w": 28,
       "h": 28
     },
-    "fx_boom": {
+    "fx_hit": {
       "x": 28,
       "y": 140,
       "w": 28,
       "h": 28
     },
-    "fx_pick": {
+    "fx_boom": {
       "x": 56,
+      "y": 140,
+      "w": 28,
+      "h": 28
+    },
+    "fx_pick": {
+      "x": 84,
       "y": 140,
       "w": 28,
       "h": 28
@@ -306,6 +312,7 @@
     "E": "npc_elder",
     "j": "lockpick",
     "q": "moneybag",
-    "Z": "door_seal"
+    "Z": "door_seal",
+    "X": "elite"
   }
 }

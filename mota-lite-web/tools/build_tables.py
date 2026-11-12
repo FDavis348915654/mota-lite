@@ -72,7 +72,8 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // I  怪物图鉴(全塔唯一，拾取后解锁图鉴界面)
 // M  被困的法师   T  被困的盗贼   E  被困的老者   N  商人(商店)
 // j  锁匠工具(13F)   q  钱袋(19F)   —— 盗贼任务线两件交付道具
-// 1-8  怪物(字符 -> MONSTERS)   U  上楼  D  下楼  W  通关(王座)
+// 1-8  怪物(字符 -> MONSTERS)   X  宝库守卫(精英怪，强度超前 9 层，守墙围宝库)
+// U  上楼  D  下楼  W  通关(王座)
 //
 // 可走格只有 . @ H U D W；其余非墙格都是「实体」，寻路不穿越、须玩家主动点击交互。
 // 暗门 A 视觉与墙一致、但属实体：主动点它(撞墙)才显形，不是可走格也不是墙。
@@ -80,6 +81,9 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // v0.12：DOOR_COST 给每道门的钥匙消耗；SECRET 给暗门坐标 -> 墙后奖励 + 剧情 key。
 // v0.13：MONSTERS 加 exp；HERO0 加 exp / flags；ITEMS 加老者 E 与任务道具 j/q；
 //   16F 的上楼门改为封印门 Z（DOOR_KEY 不含 Z，三色钥匙开不了，见 logic.js）。
+// v0.14：关卡设计深度 —— 隔间墙 + 加密实体 + 4 处强敌守宝库(3/9/14/18F)；
+//   MONSTERS 加精英怪 X(scaleShift/elite)；FLOOR_SCALE 扩到 30 组（21 逐层 + 9 外推，
+//   供 scaledMon 的 scaleShift 取「超前层」数值，见 logic.js）；meta.schema 升 6。
 """
 
 FOOTER = """

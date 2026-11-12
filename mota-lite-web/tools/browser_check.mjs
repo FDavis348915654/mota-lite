@@ -603,8 +603,11 @@ try {
   // v0.9 口径回归：用 opened 变更集清掉本层某一类怪，验证它仍列在图鉴里并标「已清除」
   // 1F 每类怪恰好 1 只，清掉下标即可让该类型存活数归零（下标由 MAP 探测现算）
   const clearCh = MAP.codexMon.types[0]
-  const clearIdx = MAP.codexMon.firstMon[clearCh].idx
-  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,0,0,1,0,0|0:' + clearIdx + '|0'); await accept('#btnImport')
+  // v0.14：1F 普通怪由 2 只加密到 5 只，同一类型可能有多只（实测 '1' 类 3 只、'2' 类 2 只）。
+  // 旧断言只清第一只，该类型仍有存活、图鉴不会标「已清除」；改为现算并清掉该类全部下标。
+  const clearIdxAll = await ev(`(async()=>{const t=await import('./tables.js');const rows=t.FLOORS[0].rows,W=rows[0].length;const out=[];for(let y=0;y<rows.length;y++)for(let x=0;x<W;x++)if(rows[y][x]===${JSON.stringify(clearCh)})out.push(y*W+x);return out})()`)
+  check('v0.14 适配：1F 目标类型怪下标现算成功（>=1 只）', clearIdxAll.length >= 1, JSON.stringify(clearIdxAll))
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,0,0,1,0,0|0:' + clearIdxAll.join('.') + '|0'); await accept('#btnImport')
   await click('#btnActCodex')
   const codexRowsCleared = await ev("document.querySelectorAll('#codexList .codex-row').length")
   check('清掉一只怪后图鉴仍列出全部类型', codexRowsCleared === MAP.codexMon.types.length,
@@ -1144,6 +1147,88 @@ try {
   check('v0.13 盗贼阶段 2→3、T 格清成地板、谢礼 +300HP/+5攻/+5防', await ev(
     `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.thiefStage(s.hero)===3 && l.tileAt(s,${th.nx},${th.ny})==='.' && s.hero.hp===500 && s.hero.atk===15 && s.hero.def===15})()`))
   await closeStory()
+
+  // ---- v0.14 强敌专项端到端：宝库守卫 X / 超前 9 层 / 暂时打不过 / 变强回头打 ----
+  // 坐标全部运行期从 tables.js 现算（沿用本文件「不写死坐标」原则），存档串统一 v4 16 段 head。
+  // 场景先由 /tmp/v14_probe.mjs 与 /tmp/v14_replay.mjs 探针实测成立，再固化成回归断言。
+  const V14 = await ev(`(async()=>{
+    const t = await import('./tables.js'), l = await import('./logic.js');
+    const W = t.FLOORS[0].rows[0].length;
+    const stand = (rows, x, y) => {
+      for (const [dx,dy] of [[0,1],[0,-1],[-1,0],[1,0]]) {
+        const sx=x+dx, sy=y+dy, c=rows[sy] && rows[sy][sx];
+        if (c && c!=='#' && !l.isEntityTile(c) && !'UDW'.includes(c)) return {x:sx,y:sy};
+      }
+      return null;
+    };
+    const elites=[];
+    t.FLOORS.forEach((f,i)=>{
+      const rows=f.rows;
+      for(let y=0;y<rows.length;y++) for(let x=0;x<W;x++) if(rows[y][x]==='X'){
+        const st=stand(rows,x,y), treasures=[];
+        for(let dy=-2;dy<=0;dy++) for(let dx=-2;dx<=2;dx++){
+          const tx=x+dx,ty=y+dy,c=rows[ty] && rows[ty][tx];
+          if(c==='s'||c==='S') treasures.push({x:tx,y:ty,idx:ty*W+tx,ch:c});
+        }
+        elites.push({floor:i,x,y,idx:y*W+x,stand:st,treasures});
+      }
+    });
+    const atlas = await (await fetch('./assets/sprites.json')).json();
+    return { elites, W,
+      atlasHasElite: !!atlas.frames.elite && atlas.tileMap.X === 'elite',
+      scaleGroups: t.FLOOR_SCALE.length,
+      mon: t.monsterByCh('X'),
+      hint3: l.battleHint(l.newGame().hero, t.monsterByCh('X'), 2).r.reason,
+      weakAll: elites.every(e => !l.calcBattle(l.newGame().hero, t.monsterByCh('X'), e.floor).ok),
+      strongAll: elites.every(e => l.calcBattle({hp:99999,atk:9999,def:9999}, t.monsterByCh('X'), e.floor).ok) };
+  })()`)
+  check('v0.14 强敌：4 处宝库守卫分布在 3/9/14/18F 且各有唯一入口与双宝物',
+    V14.elites.length === 4 &&
+    JSON.stringify(V14.elites.map(e => e.floor)) === JSON.stringify([2,8,13,17]) &&
+    V14.elites.every(e => !!e.stand && e.treasures.length === 2),
+    JSON.stringify(V14.elites.map(e => ({ f:e.floor+1, x:e.x, y:e.y, st:e.stand, tr:e.treasures.length }))))
+  check('v0.14 强敌：elite 精灵帧 + X 映射 + FLOOR_SCALE 30 组',
+    V14.atlasHasElite && V14.scaleGroups === 30)
+  check('v0.14 强敌：X 带 scaleShift9 / elite / hpW3',
+    !!V14.mon && V14.mon.scaleShift === 9 && V14.mon.elite === true && V14.mon.hpW === 3,
+    JSON.stringify(V14.mon))
+  check('v0.14 强敌：开局属性打不过全部 4 处', V14.weakAll)
+  check('v0.14 强敌：变强后全部可打', V14.strongAll)
+  check('v0.14 强敌：3F 战斗手册标记「破不了防」', V14.hint3 === 'unbreakable', V14.hint3)
+
+  const E0 = V14.elites[0]   // 3F：唯一入口 (2,5)、X(2,4)、宝物 (2,3)s /(3,3)S
+  // (1) 开局属性撞 X：被拦住、停原地、X 不清、弹「暂不可敌」引导
+  await setVal('#saveInput', `4|${E0.floor},${E0.stand.x},${E0.stand.y},200,10,10,0,0,0,0,0,0,0,0,0,0||0.1.2`); await accept('#btnImport')
+  await closeStory()
+  await cellClick(E0.idx)
+  const blocked14 = await waitFor("document.querySelector('#tip').textContent.includes('攻击不足，无法破防')", 10000)
+  check('v0.14 强敌：开局撞 X 被拦下（攻击不足，无法破防）', blocked14, await txt('#tip'))
+  check('v0.14 强敌：首次撞 X 弹「宝库守卫 · 暂不可敌」引导',
+    (await hidden('#storyLayer')) === false && (await txt('#storyTitle')).includes('宝库守卫'),
+    await txt('#storyTitle'))
+  check('v0.14 强敌：打不过时英雄停原地、X 未被清除', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return s.x===${E0.stand.x} && s.y===${E0.stand.y} && s.floor===${E0.floor} && l.tileAt(s,${E0.x},${E0.y})==='X' && s.hero.hp===200})()`))
+  await closeStory()
+
+  // (2) 高属性打赢 X：清格 + 金币/经验入账，随后宝库道具可达
+  await setVal('#saveInput', `4|${E0.floor},${E0.stand.x},${E0.stand.y},99999,9999,9999,0,0,0,0,0,0,0,0,0,0||0.1.2`); await accept('#btnImport')
+  await closeStory()
+  await cellClick(E0.idx)
+  const won14 = await waitFor("document.querySelector('#tip').textContent.includes('胜 宝库守卫')", 10000)
+  check('v0.14 强敌：变强后撞 X 可击败（结算文案 +EXP/+G）', won14, await txt('#tip'))
+  check('v0.14 强敌：击败后 X 清成地板且经验/金币入账', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.tileAt(s,${E0.x},${E0.y})==='.' && s.hero.exp>0 && s.hero.gold>0})()`))
+  await waitFor("document.querySelector('#hudExp').textContent !== 'E0'", 10000)  // 等战斗动画结束、render 刷新，animating 解除后才能再点格子
+  await cellClick(E0.treasures[0].idx)
+  const got14 = await waitFor("document.querySelector('#tip').textContent.includes('获得')", 10000)
+  check('v0.14 强敌：击败守卫后宝库道具可达并可拾取', got14, await txt('#tip'))
+  await closeStory()
+
+  // (3) 文案层：4 处楼层线索、m9 图鉴描述
+  check('v0.14 强敌：4 处楼层文案都有宝库/守卫线索', await ev(
+    "(async()=>{const t=await import('./texts.js');return ['floor_3f','floor_9f','floor_14f','floor_18f'].every(k=>t.TEXTS.story[k] && /宝库|守卫/.test(t.TEXTS.story[k].body))})()"))
+  check('v0.14 强敌：m9 图鉴描述与 elite_hint 引导齐全', await ev(
+    "(async()=>{const t=await import('./texts.js');return !!t.TEXTS.monsterDesc.m9 && !!t.TEXTS.story.elite_hint && /超前|变强/.test(t.TEXTS.monsterDesc.m9)})()"))
 
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {

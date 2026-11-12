@@ -46,7 +46,14 @@ import {
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
 export function scaledMon(mon, floor) {
   if (!mon || mon.noScale) return mon
-  const s = (FLOOR_SCALE && FLOOR_SCALE[floor]) || null
+  // v0.14：精英怪 scaleShift 取「超前 N 层」的 FLOOR_SCALE（含 21F 之上的外推段），
+  // 让同一只宝库守卫在 3F 就是 12F 强度、在 18F 更远超终局 —— 玩家须爬楼变强
+  // 再回来打。普通怪 scaleShift=0，索引恒在 0~20，行为与 v0.13 完全一致。
+  const idx = Math.min(
+    (floor == null ? 0 : floor) + (mon.scaleShift || 0),
+    (FLOOR_SCALE && FLOOR_SCALE.length - 1) || 0
+  )
+  const s = (FLOOR_SCALE && FLOOR_SCALE[idx]) || null
   if (!s) return mon
   return {
     ...mon,

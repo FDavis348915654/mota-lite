@@ -620,6 +620,9 @@ function step(dir) {
     if (beforeTile === 'j' && progressed) queueStory('lockpick')
     if (beforeTile === 'q' && progressed) queueStory('moneybag')
     if (beforeTile === 'Z' && progressed) queueStory('sealed_door')
+    // v0.14：首次撞到宝库守卫（此时必被 calcBattle 拦下）弹一次引导，
+    // 说明「破不了防 / 会阵亡」是暂时打不过，变强后回来打取宝。
+    if (beforeTile === 'X' && progressed) queueStory('elite_hint')
     if (beforeTile === 'N' && progressed) openShop()
     if (beforeTile === 'M' && progressed) {
       if (mageFreedBefore) openMage()

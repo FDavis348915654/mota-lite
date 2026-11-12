@@ -65,6 +65,11 @@ export function findPath(s, targets, opts) {
       if ((ch === 'M' || ch === 'T') && !targets.has(nx + ',' + ny)) continue
       // 商人不可踩：两种模式都绕开
       if (ch === 'N') continue
+      // v0.14：楼梯 U/D 只允许作为终点，不能当普通地板穿过。加密隔间后
+      // BFS 会规划出「抄近路踩 D」的路径，resolveStep 立刻换层、路径后半段
+      // 作废，英雄落回上一层的 U 格，形成「起点即目标」死局（8F 实测轨迹）。
+      // g.stairs 目标就是 U；盗贼任务线下楼目标 (1,1) 是 D —— 都靠 targets 放行。
+      if ((ch === 'U' || ch === 'D') && !targets.has(nx + ',' + ny)) continue
       // v0.10 玩家点击模式：门与其它实体一律不穿越（经典魔塔「门不可绕行」）。
       // 门必须主动点击才会开；只有「目标格本身就是这个实体」才允许作为终点。
       // solver 自用模式（不传 opts）仍可穿过有钥匙的门，保证攻略路线不受影响。
@@ -118,11 +123,11 @@ export function findSolution() {
   let s = newGame()
   const steps = []
   let visited = 0, rounds = 0
-  const MAX_STEPS = 2400   // 21 层 13×15 大地图实测 1432 步，留足余量
+  const MAX_STEPS = 3000   // 21 层 13×15 大地图实测 1432 步，留足余量
 
   while (!s.ended && steps.length < MAX_STEPS) {
     rounds++
-    if (rounds > 500) return null            // 防策略死循环
+    if (rounds > 600) return null            // 防策略死循环
 
     // v0.13 盗贼任务线：持有任务道具且盗贼在等交付时，优先逐层下楼回 15F（floor index 14）。
     // stage1（交锁匠工具）是通关硬门槛 —— 16F 封印门 Z 不开就到不了上层；stage2（交钱袋）
@@ -155,12 +160,16 @@ export function findSolution() {
     }
     if (!picked) return null                 // 无可达目标 = 死局信号
 
+    const beforeFloor = s.floor
     for (const d of picked) {
       const before = s.floor + ',' + s.x + ',' + s.y
       const r = resolveStep(s, d)
       s = r.state
       steps.push(d)
       if (s.ended) break
+      // v0.14：踩到楼梯换层后，当前层的剩余方向全部作废（英雄已落到另一层），
+      // 否则会拿旧路径在新层乱走，甚至停回 U 格上。
+      if (s.floor !== beforeFloor) break
       // 被墙/门/不可破防拦住、或 v0.11 实体交互结算后停在原地，坐标都不变；
       // 统一当作「本段路径走完」，由外层重新 scan（该实体已清成地板，不再列为目标）。
       if (s.floor + ',' + s.x + ',' + s.y === before) break

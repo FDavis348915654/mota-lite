@@ -1,10 +1,10 @@
 {
-  "version": "0.13.1",
+  "version": "0.14.0",
   "sprites": {
     "image": "assets/sprites.png",
     "atlas": "assets/sprites.json",
     "tile": 28,
-    "count": 43
+    "count": 44
   },
   "animations": [
     "assets/hero_idle.gif",

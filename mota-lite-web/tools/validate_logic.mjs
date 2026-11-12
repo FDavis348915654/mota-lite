@@ -159,8 +159,11 @@ eq(calcBattle({ atk: 2, def: 10, hp: 200 }, slime, 0).reason, 'unbreakable',
     return calcBattle(lowDef, n, 10).monPerHit >= calcBattle(highDef, n, 10).monPerHit
   })(), 'DEF 越高普通怪净伤越低')
 }
-// 逐层曲线：21F 怪数值显著高于 1F，且 21 组递增
-ok('FLOOR_SCALE 覆盖 21 层', FLOOR_SCALE.length === 21, FLOOR_SCALE.length + ' 组')
+// v0.14：前 21 组逐层标准怪 + 9 组外推，供精英怪 scaleShift 取「超前层」数值。
+ok('FLOOR_SCALE = 21 逐层 + 9 外推 = 30 组', FLOOR_SCALE.length === 30,
+  FLOOR_SCALE.length + ' 组')
+ok('外推段数值仍递增（高层精英不退化）',
+  FLOOR_SCALE.slice(21).every((s, i, a) => i === 0 || (s.atk > a[i - 1].atk && s.hp > a[i - 1].hp)))
 ok('逐层怪 ATK 单调递增', FLOOR_SCALE.every((s, i) => i === 0 || s.atk >= FLOOR_SCALE[i - 1].atk),
   '1F=' + FLOOR_SCALE[0].atk + ' → 21F=' + FLOOR_SCALE[20].atk)
 ok('同一只怪在 21F 显著强于 1F', scaledMon(slime, 20).hp > scaledMon(slime, 0).hp * 3,
@@ -926,5 +929,69 @@ console.log('\n=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===')
   }
 }
 
+// ---- v0.14 精英怪 / 宝库 / 暂时打不过 ----
+console.log('\n=== v0.14 关卡设计深度 ===')
+const eliteMon = monsterByCh('X')
+const eliteFloorIdx = []
+FLOORS.forEach((f, i) => { if (f.rows.join('').includes('X')) eliteFloorIdx.push(i) })
+const eliteXY = f => {
+  let p = null
+  FLOORS[f].rows.forEach((row, y) => { const x = row.indexOf('X'); if (x >= 0) p = { x, y } })
+  return p
+}
+ok('精英怪 X 存在、带 scaleShift=9 与 elite 标记',
+  !!eliteMon && eliteMon.scaleShift === 9 && eliteMon.elite === true)
+ok('scaledMon 对精英取超前 9 层数值（3F 用 FLOOR_SCALE[11]）',
+  scaledMon(eliteMon, 2).hp === Math.round(FLOOR_SCALE[11].hp * eliteMon.hpW))
+ok('同一精英在 18F 显著强于 3F', scaledMon(eliteMon, 17).hp > scaledMon(eliteMon, 2).hp)
+ok('开局属性打不过全部 4 处精英',
+  eliteFloorIdx.every(f => !calcBattle(newGame().hero, eliteMon, f).ok))
+ok('终局属性回头可打全部 4 处精英（sol.hero）',
+  !!sol && eliteFloorIdx.every(f => calcBattle(sol.hero, eliteMon, f).ok))
+ok('打不过时宝库道具不可达（纯支线，findPath 视 X 为阻挡）',
+  eliteFloorIdx.every(f => {
+    const p = eliteXY(f); if (!p) return false
+    const s = { ...newGame(), floor: f }
+    return findPath(s, new Set([p.x + ',' + (p.y - 1)]), { blockEntities: true }).path === null
+  }))
+ok('变强后 findPath 可穿越 X 到达宝库道具',
+  !!sol && eliteFloorIdx.every(f => {
+    const p = eliteXY(f); if (!p) return false
+    const s = { ...newGame(), floor: f, hero: { ...sol.hero } }
+    return findPath(s, new Set([p.x + ',' + (p.y - 1)])).path !== null
+  }))
+// v0.14：solver 把 U/D 收成「只允许作为终点」。行为断言 = 用终局属性（门/怪都能过）
+// 让每层从一块地板走到最远的另一块地板，逐步回放检查路径中间不踩任何 U/D 格；
+// 至少 15 层实际产出路径才有约束力（隔间墙可能把个别层切成不连通区域，跳过不计）。
+ok('楼梯 U/D 不可被 findPath 当作通路穿过', (() => {
+  const DELTA = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }
+  let checked = 0
+  for (let i = 0; i < FLOORS.length; i++) {
+    const rows = FLOORS[i].rows
+    const stairs = new Set(), plain = []
+    rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (ch === 'U' || ch === 'D') stairs.add(x + ',' + y)
+      else if (ch === '.' || ch === '@') plain.push({ x, y })
+    }))
+    if (!stairs.size || plain.length < 2) continue
+    const start = plain[0]
+    let target = null, best = -1
+    for (const p of plain) {
+      const d = Math.abs(p.x - start.x) + Math.abs(p.y - start.y)
+      if (d > best) { best = d; target = p }
+    }
+    const st = { ...newGame(), floor: i, x: start.x, y: start.y, hero: { ...sol.hero } }
+    const r = findPath(st, new Set([target.x + ',' + target.y]))
+    if (!r.path) continue
+    checked++
+    let cx = start.x, cy = start.y
+    for (let k = 0; k < r.path.length; k++) {
+      const [dx, dy] = DELTA[r.path[k]]
+      cx += dx; cy += dy
+      if (k < r.path.length - 1 && stairs.has(cx + ',' + cy)) return false
+    }
+  }
+  return checked >= 15
+})())
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

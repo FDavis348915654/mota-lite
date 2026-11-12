@@ -173,5 +173,13 @@ ok('v0.13 商店五种商品 UI 文案齐全（含炸弹）',
 ok('v0.13 法师兑换 UI 文案齐全（三属性 + 离开）',
   ['atk', 'def', 'hp'].every(k => !!TEXTS.ui.mageGoods[k]) && !!TEXTS.ui.mageLeave)
 
+// ---- v0.14 精英怪资源 / 文案 ----
+ok('atlas 有 elite 帧且 X 映射到它',
+  !!atlas.frames.elite && atlas.tileMap.X === 'elite')
+ok('v0.14 精英怪有图鉴描述与引导剧情',
+  !!TEXTS.monsterDesc.m9 && !!TEXTS.story.elite_hint)
+ok('v0.14 四处楼层文案都有宝库线索',
+  ['floor_3f', 'floor_9f', 'floor_14f', 'floor_18f'].every(k =>
+    TEXTS.story[k] && /守卫|宝库/.test(TEXTS.story[k].body)))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)
