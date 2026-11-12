@@ -147,6 +147,10 @@ body {
 .story-title { padding: 9px 12px 4px; font-size: 17px; font-weight: 700; color: var(--accent); }
 /* v0.12：14px 正文配打字机，长剧情用滚动而不是裁掉 */
 .story-body { padding: 0 12px 10px; min-height: 96px; max-height: 160px; overflow-y: auto; font-size: 14px; line-height: 1.6; color: #dbe6f0; white-space: pre-wrap; }
+/* v0.13.1：常驻交易弹层（商店 / 法师，正文 89 字必然撑满）把正文区高度钉死，
+   打字机逐字内容只在框内滚动，卡片不再 96→160px 撑高、商品按钮不位移（避免误选）。
+   短剧情最短仅 32 字，故只在 persistent 上生效，不全局固定以免大片留白。 */
+.story-card.persistent .story-body { height: 160px; min-height: 0; max-height: none; scrollbar-gutter: stable; }
 /* v0.13：常驻交易弹层的余额行（金币 / 经验），购买后原地刷新 */
 .story-status { padding: 0 12px 8px; font-size: 13px; line-height: 1.4; color: var(--accent); }
 .story-status[hidden] { display: none; }

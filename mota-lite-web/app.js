@@ -419,6 +419,8 @@ function showNextStory() {
   $('storyBody').textContent = ''
   // 常驻交易弹层不显示「继续」，避免它与「离开」表现重复（用户反馈）
   $('storyContinue').hidden = !!item.persistent
+  // v0.13.1：常驻交易弹层正文区高度固定，打字机只在框内滚，卡片不伸缩、按钮不位移
+  document.querySelector('.story-card').classList.toggle('persistent', !!item.persistent)
   updateStoryStatus()
   const acts = $('storyActions'); acts.innerHTML = ''
   item.actions.forEach(a => {

@@ -13,7 +13,7 @@
 
 | 路径 | 说明 |
 |---|---|
-| `mota-lite-web/` | **在线试玩版工程本体**（当前主力，v0.13.0） |
+| `mota-lite-web/` | **在线试玩版工程本体**（当前主力，v0.13.1） |
 | `mota-lite-web/logic.js` | 逻辑层纯函数：移动 / 战斗 / 门 / 暗门 / 商店 / 经验 / 盗贼任务线 / 存档序列化，零 DOM，可被 Node 直接 import |
 | `mota-lite-web/tables.js` | 由 `levels.json` 生成的配置表（FLOORS / MONSTERS / ITEMS / DOOR_COST / SECRET…） |
 | `mota-lite-web/solver.js` | 攻略求解器：可解性验证 + 攻略回放 + 点击寻路共用 |
@@ -22,8 +22,9 @@
 | `mota-lite-web/tools/` | 关卡生成、导表、资源生成、四套离线校验、真实 Chromium 回归 |
 | `mota-lite/` | 手环端 M1 快应用工程（小米手环 10 / Vela，真机暂缓，**已冻结**） |
 | `mota-lite-skeleton/` | 最早期逻辑骨架留档 |
-| `小米手环10-魔塔Lite开发方案.md` | 移植到小米手环 10（Vela 快应用）的方案文档（附 O 记录 v0.13.0） |
-| `魔塔Lite-开发盘点.md` | 逐版本开发盘点与当前状态（0-J 为最新） |
+| `小米手环10-魔塔Lite开发方案.md` | 移植到小米手环 10（Vela 快应用）的方案文档（附 O 记录 v0.13.0，附 P 记录 v0.13.1） |
+| `魔塔Lite-开发盘点.md` | 逐版本开发盘点与当前状态（0-K 为最新） |
+| `开发注意事项.md` | **协作与开发流程约定的单一真源**（沟通、方案确认、版本、测试分级、备份口令、工程边界） |
 | `README.md` | 本文件 |
 | `LICENSE` | MIT |
 | `.gitignore` | 版本控制排除规则（详见下方「版本控制约定」） |
@@ -53,7 +54,7 @@ python3 -m http.server 8765
 | 回放 播放 / 步进 / 调速 | 右侧工作台回放条 | `空格` 播放、`[` `]` 步进、`+` `-` 调速、`Esc` 退出 |
 | 弹层确认 / 关闭 | 点击按钮 | `Enter` / `空格` 确认、`Esc` 关闭 |
 
-> `炸弹` / `购买` 按钮开局隐藏：分别由「救出 12F 老者」「首次走到商店格旁交互」解锁；`购买` 解锁后可随时随地打开商店。常驻交易弹层（商店 / 法师兑换）没有「继续」按钮，购买后不关闭，点「离开」才关。
+> `炸弹` / `购买` 按钮开局隐藏：分别由「救出 12F 老者」「首次走到商店格旁交互」解锁；`购买` 解锁后可随时随地打开商店。常驻交易弹层（商店 / 法师兑换）没有「继续」按钮，购买后不关闭，点「离开」才关；其正文区高度固定，文字只在框内滚动，不会因打字机把商品按钮推走导致误选。
 
 ## 玩法要素
 
@@ -76,21 +77,25 @@ python3 tools/make_levels.py        # 重新生成 levels/levels.json（改关�
 python3 tools/build_tables.py       # levels.json -> tables.js；--check 只校验一致性
 python3 tools/gen_assets.py         # 重新生成图集 / 音频 / manifest.json（改美术后跑）
 
-node tools/validate_version.mjs     # 版本 / 布局 / 字号断言（83 项）
+node tools/validate_version.mjs     # 版本 / 布局 / 字号断言（87 项）
 node tools/validate_levels.mjs      # 关卡语义断言（83 项）
 node tools/validate_logic.mjs       # 逻辑层断言（423 项）
 node tools/validate_assets.mjs      # 资源断言（92 项）
-node tools/browser_check.mjs        # 真实 Chromium 回归（312 项，需先起 http.server 8765）
+node tools/browser_check.mjs        # 真实 Chromium 回归（314 项，需先起 http.server 8765）
 ```
 
-全套合计 **993 项断言**（离线四套 + 导表一致性 + 真实浏览器回归）。
+全套合计 **999 项断言**（离线四套 + 导表一致性 + 真实浏览器回归）。
 
 改完**必须递增版本号**，否则标题 / 页脚 / 版本记录会漂移：
 
 1. `mota-lite-web/version.js` 的 `VERSION`（唯一真源，HTML 不硬编码任何版本号）
 2. 同文件 `CHANGELOG` 最前面补一条，`v` 必须与 `VERSION` 完全一致
 
+> `assets/manifest.json` 的 `version` 由 `tools/gen_assets.py` 从 `version.js` 读取并写入，升级版本后重跑该脚本即可（精灵内容确定、二进制不变）。
+
 ### 协作流程
+
+> 完整的协作与开发约定（沟通、方案确认、版本与生成链、测试分级、备份口令、工程边界）见 **[开发注意事项.md](开发注意事项.md)**；本段只列速查项。
 
 这个目录同时是云电脑上的工作副本，**动手前先同步远端**。仓库已配置 `pull.rebase=true` 与 `rebase.autoStash=true`，有未提交改动时也能直接拉：
 
@@ -102,8 +107,8 @@ git pull --rebase        # 或简写 git sync（已设别名）
 
 1. `git pull --rebase` 拉到最新
 2. 改 `mota-lite-web/` 下的代码，递增 `version.js`
-3. 跑四套离线校验 + `node tools/browser_check.mjs`
-4. **只有用户明确说「备份」才执行 `git add -A && git commit -m "..." && git push`**。日常代码改动、版本递增、文档更新都只留在本地，不用每次对话之后都提交。
+3. 按《开发注意事项》第 4 节做**对应量级**的校验：日常小改动只做轻量校验（语法检查 + 改动点定向验证），大功能更新或用户明确说「完整测试」才跑离线四套 + `node tools/browser_check.mjs`
+4. **只有用户明确说「备份」才执行 `git add -A && git commit -m "..." && git push`**。日常代码改动、版本递增、文档更新都只留在本地，不用每次对话之后都提交；备份前默认也只做轻量校验。
 
 ### 版本控制约定
 
@@ -121,7 +126,7 @@ git pull --rebase        # 或简写 git sync（已设别名）
 
 ## 版本
 
-当前 **v0.13.0**。完整变更记录（每个版本改了什么、数值怎么定的）见 `mota-lite-web/version.js` 的 `CHANGELOG` 与 `魔塔Lite-开发盘点.md`（0-J 段）。
+当前 **v0.13.1**。完整变更记录（每个版本改了什么、数值怎么定的）见 `mota-lite-web/version.js` 的 `CHANGELOG` 与 `魔塔Lite-开发盘点.md`（0-J / 0-K 段）。
 
 ## 仓库用途
 

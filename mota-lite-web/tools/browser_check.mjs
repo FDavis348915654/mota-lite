@@ -502,6 +502,16 @@ try {
   await cellClick(sp.sy * MAP.W + sp.sx)
   const shopOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===5})()", 10000)
   check('v0.13 点商人弹常驻交易框（4 商品 + 离开 = 5 个动作）', shopOpen, await txt('#storyTitle'))
+  // v0.13.1：打字机逐字期间卡片 / 商品按钮坐标必须恒定，否则 flex 居中会把按钮往下推、误选商品
+  const shrink = []
+  for (let i = 0; i < 12; i++) {
+    shrink.push(await ev("(()=>{const c=document.querySelector('.story-card').getBoundingClientRect(),b=document.querySelector('#storyActions button').getBoundingClientRect();return {h:+c.height.toFixed(1),t:+b.top.toFixed(1)}})()"))
+    await sleep(90)
+  }
+  const hRange = Math.max(...shrink.map(d => d.h)) - Math.min(...shrink.map(d => d.h))
+  const tRange = Math.max(...shrink.map(d => d.t)) - Math.min(...shrink.map(d => d.t))
+  check('v0.13.1 打字机期间卡片高度恒定（不伸缩）', hRange <= 1, hRange.toFixed(1) + 'px')
+  check('v0.13.1 打字机期间商品按钮坐标恒定（不误选）', tRange <= 1, tRange.toFixed(1) + 'px')
   const shopLabels = await txt('#storyActions')
   check('v0.13 商店提供攻击 / 防御 / 生命 / 黄钥匙四种商品（炸弹未解锁）',
     ['攻击','防御','生命','黄钥匙'].every(k => shopLabels.includes(k)) && !shopLabels.includes('炸弹'), shopLabels)

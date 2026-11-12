@@ -147,7 +147,10 @@ ok('帮助文案齐全', ['controls', 'keys', 'rule', 'optional'].every(k => !!T
 ok('meta 三件套齐全', !!TEXTS.meta.gameTitle && !!TEXTS.meta.tagline && !!TEXTS.meta.footer)
 
 console.log('\n=== 7. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 封印门 专项 ===')
-ok('manifest 版本升到 0.13.0', man.version === '0.13.0', man.version)
+// 用版本下限而非硬编码具体版本，避免每次升 patch 都要改断言；严格同源由第 1 节保证
+const mver = man.version.split('.').map(Number)
+ok('manifest 版本不低于 0.13.0（v0.13 资源链已建）',
+  mver[0] > 0 || (mver[0] === 0 && mver[1] >= 13), man.version)
 ok('atlas 新增 E / j / q / Z 四个精灵映射',
   atlas.tileMap.E === 'npc_elder' && atlas.tileMap.j === 'lockpick' &&
   atlas.tileMap.q === 'moneybag' && atlas.tileMap.Z === 'door_seal',

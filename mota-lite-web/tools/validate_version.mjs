@@ -207,10 +207,11 @@ ok('validate_assets.mjs 校验 atlas 的 A/G 映射与暗门剧情',
   read('tools/validate_assets.mjs').includes("atlas.tileMap.A === 'wall'") &&
   read('tools/validate_assets.mjs').includes("atlas.tileMap.G === 'door_iron'") &&
   read('tools/validate_assets.mjs').includes('secretStoryKeys'))
-ok('CHANGELOG 首条说明 v0.13 经验 / 盗贼任务线 / 封印门 / 炸弹 / 存档 v4 / 音量',
-  CHANGELOG[0].note.includes('经验系统') && CHANGELOG[0].note.includes('盗贼任务线') &&
-  CHANGELOG[0].note.includes('封印门') && CHANGELOG[0].note.includes('存档升 v4') &&
-  CHANGELOG[0].note.includes('音量'))
+// patch 版本（v0.13.1）会成为首条，故 v0.13 大版本记录改为「存在该条目」而非「首条」
+const c13 = CHANGELOG.find(c => c.v === 'v0.13.0')
+ok('CHANGELOG 有 v0.13.0 且说明经验 / 盗贼任务线 / 封印门 / 存档 v4 / 音量',
+  !!c13 && c13.note.includes('经验系统') && c13.note.includes('盗贼任务线') &&
+  c13.note.includes('封印门') && c13.note.includes('存档升 v4') && c13.note.includes('音量'))
 
 // ---- v0.13 经验 / 盗贼任务线 / 炸弹中后期化 / 存档 v4：静态防漂移 ----
 ok('logic.js 定义 FLAG / thiefStage / monsterExp / mageBuy',
@@ -240,5 +241,18 @@ ok('browser_check.mjs 有 v0.13 经验 / 法师 / 老者 / 封印门 / 盗贼端
 ok('validate_assets.mjs 有 v0.13 精灵 / 剧情 / 商店炸弹专项',
   ['atlas 新增 E / j / q / Z 四个精灵映射', 'v0.13 新剧情 key 齐全',
    'SECRET 奖励不再产出炸弹'].every(s => read('tools/validate_assets.mjs').includes(s)))
+
+// ---- v0.13.1 常驻交易弹层尺寸恒定：静态防漂移 ----
+ok('style.css 常驻交易弹层正文区高度钉死 160px',
+  /\.story-card\.persistent\s+\.story-body\s*\{[^}]*height:\s*160px/.test(css) &&
+  /\.story-card\.persistent\s+\.story-body\s*\{[^}]*scrollbar-gutter:\s*stable/.test(css))
+ok('app.js 给常驻交易弹层加 persistent 类',
+  app.includes("classList.toggle('persistent'"))
+ok('browser_check.mjs 有打字机期间坐标恒定专项',
+  browserCheck.includes('v0.13.1 打字机期间卡片高度恒定') &&
+  browserCheck.includes('v0.13.1 打字机期间商品按钮坐标恒定'))
+ok('CHANGELOG 首条为 v0.13.1 且说明界面伸缩 / 误选',
+  CHANGELOG[0].v === 'v0.13.1' && CHANGELOG[0].note.includes('界面伸缩') &&
+  CHANGELOG[0].note.includes('误选'))
 
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')
