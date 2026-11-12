@@ -146,5 +146,29 @@ ok('载入确认文案含存档串占位符', TEXTS.confirm.importBody.includes(
 ok('帮助文案齐全', ['controls', 'keys', 'rule', 'optional'].every(k => !!TEXTS.help[k]))
 ok('meta 三件套齐全', !!TEXTS.meta.gameTitle && !!TEXTS.meta.tagline && !!TEXTS.meta.footer)
 
+console.log('\n=== 7. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 封印门 专项 ===')
+ok('manifest 版本升到 0.13.0', man.version === '0.13.0', man.version)
+ok('atlas 新增 E / j / q / Z 四个精灵映射',
+  atlas.tileMap.E === 'npc_elder' && atlas.tileMap.j === 'lockpick' &&
+  atlas.tileMap.q === 'moneybag' && atlas.tileMap.Z === 'door_seal',
+  ['E', 'j', 'q', 'Z'].map(c => c + ':' + atlas.tileMap[c]).join(' '))
+ok('npc_elder / lockpick / moneybag / door_seal 四帧都存在',
+  ['npc_elder', 'lockpick', 'moneybag', 'door_seal'].every(k => !!atlas.frames[k]))
+ok('地图已无炸弹拾取格 o（炸弹改商店购买）', !used.has('o'), [...used].sort().join(' '))
+ok('items 仍保留 bomb 定义（供商店 effect 用）但不再放置到地图',
+  ITEMS.some(i => i.id === 'bomb' && i.ch === 'o') && !used.has('o'))
+ok('SECRET 奖励不再产出炸弹（改金币轮换）',
+  SECRET.every(s => !/bomb/.test(s.item) && !/bomb/.test(s.story)))
+ok('v0.13 新剧情 key 齐全（法师 / 老者 / 任务道具 / 封印门 / 盗贼五段）',
+  ['mage_free', 'mage', 'elder', 'lockpick', 'moneybag', 'sealed_door',
+   'thief_free', 'thief_task1', 'thief_door', 'thief_task2', 'thief_leave']
+    .every(k => !!TEXTS.story[k] && !!TEXTS.story[k].title && !!TEXTS.story[k].body))
+ok('v0.13 新道具都有描述文案',
+  ['npc_elder', 'quest_lockpick', 'quest_moneybag'].every(id => !!TEXTS.itemDesc[id]))
+ok('v0.13 商店五种商品 UI 文案齐全（含炸弹）',
+  ['atk', 'def', 'hp', 'key', 'bomb'].every(k => !!TEXTS.ui.shopGoods[k]))
+ok('v0.13 法师兑换 UI 文案齐全（三属性 + 离开）',
+  ['atk', 'def', 'hp'].every(k => !!TEXTS.ui.mageGoods[k]) && !!TEXTS.ui.mageLeave)
+
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

@@ -14,7 +14,7 @@
 // 可选机制（飞行器 / 炸弹 / 商店）不进路线 —— 它们是捷径而非通关必需。
 
 import {
-  newGame, resolveStep, tileAt, calcBattle, isEntityTile
+  newGame, resolveStep, tileAt, calcBattle, isEntityTile, FLAG, thiefStage
 } from './logic.js'
 import {
   FLOORS, DOOR_KEY, DOOR_COST, monsterByCh, itemByCh
@@ -58,6 +58,11 @@ export function findPath(s, targets, opts) {
       // v0.12：铁门要 3 把黄钥匙，只有 1~2 把时不能当作「可穿过」，
       // 否则攻略会规划一条实际走不通的路并在门前来回 break，最终触发死局信号。
       if (need && s.hero.keys[need] < (DOOR_COST[ch] || 1)) continue
+      // v0.13：封印门 Z 钥匙开不了，只能等盗贼任务线远程撬开；两种模式都不可穿越。
+      if (ch === 'Z') continue
+      // v0.13：法师 M / 盗贼 T 救出后常驻（固定 NPC），路径不可穿越、只允许作为目标格
+      // （完成任务时撞上去）；否则路径会反复穿过它们被「撞停」，在原地死循环（r113 震荡根因）。
+      if ((ch === 'M' || ch === 'T') && !targets.has(nx + ',' + ny)) continue
       // 商人不可踩：两种模式都绕开
       if (ch === 'N') continue
       // v0.10 玩家点击模式：门与其它实体一律不穿越（经典魔塔「门不可绕行」）。
@@ -86,7 +91,19 @@ function scan(s) {
       if (ch === 'W') g.win.push(key)
       // v0.12：暗门 A 也算支线目标，攻略会顺路撞开拿墙后奖励（含黄钥匙），
       // 但它们不是必经路，少撞几处也不影响通关。
-      if (itemByCh(ch) || ch === 'H' || ch === 'A') g.items.push(key)
+      if (itemByCh(ch) || ch === 'H' || ch === 'A') {
+        // v0.13 常驻 NPC：法师救过之后是「兑换商」不是清场目标（兑换可选，攻略不用）；
+        // 盗贼只在「撞上去能推进任务线」时列为目标，否则会对常驻格反复空撞、死循环。
+        if (ch === 'M' && (s.hero.flags & FLAG.MAGE_FREED)) continue
+        if (ch === 'T') {
+          const st = thiefStage(s.hero)
+          const canAdvance = st === 0 ||
+            (st === 1 && (s.hero.flags & FLAG.LOCKPICK)) ||
+            (st === 2 && (s.hero.flags & FLAG.MONEYBAG))
+          if (!canAdvance) continue
+        }
+        g.items.push(key)
+      }
       const mon = monsterByCh(ch)
       if (mon && calcBattle(s.hero, mon, s.floor).ok) g.monsters.push(key)
       const need = DOOR_KEY[ch]
@@ -106,6 +123,27 @@ export function findSolution() {
   while (!s.ended && steps.length < MAX_STEPS) {
     rounds++
     if (rounds > 500) return null            // 防策略死循环
+
+    // v0.13 盗贼任务线：持有任务道具且盗贼在等交付时，优先逐层下楼回 15F（floor index 14）。
+    // stage1（交锁匠工具）是通关硬门槛 —— 16F 封印门 Z 不开就到不了上层；stage2（交钱袋）
+    // 是可选支线，也顺路完成以验证全链。D 楼梯固定 (1,1)，逐层下，路径到 D 为止（踩 D 换层）。
+    const _st = thiefStage(s.hero)
+    const _needThief = (_st === 1 && (s.hero.flags & FLAG.LOCKPICK)) ||
+                       (_st === 2 && (s.hero.flags & FLAG.MONEYBAG))
+    if (_needThief && s.floor > 14) {
+      const rd = findPath(s, new Set(['1,1']))
+      if (rd.path) {
+        for (const d of rd.path) {
+          const bf = s.floor
+          const rr = resolveStep(s, d)
+          s = rr.state
+          steps.push(d)
+          if (s.ended || s.floor !== bf) break   // 踩到 D 已换层，旧路径作废
+        }
+        continue
+      }
+    }
+
     const g = scan(s)
     const groups = [g.win, g.items, g.monsters, g.doors, g.stairs]
     let picked = null

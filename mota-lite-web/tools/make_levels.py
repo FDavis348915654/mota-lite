@@ -46,12 +46,16 @@ THEMES = [
 ]
 
 # 有房间的层（0-based）
-ROOM_FLOORS = {1, 3, 5, 7, 10, 12, 14, 16, 18}
+ROOM_FLOORS = {1, 3, 5, 7, 10, 11, 12, 14, 16, 18}
 # 房间内容（1-based 层号 -> 类型）
 ROOM_KIND = {
     2: 'merchant', 4: 'treasure', 6: 'codex', 8: 'mage', 11: 'fly',
-    13: 'treasure', 15: 'thief', 17: 'merchant', 19: 'treasure',
+    12: 'elder', 13: 'treasure', 15: 'thief', 17: 'merchant', 19: 'treasure',
 }
+# v0.13：16F 上楼唯一入口改放「特殊封印门 Z」——三色钥匙都开不了，
+# 只有完成盗贼任务线（15F 救盗贼 -> 13F 找回锁匠工具 -> 交给盗贼）才会被远程撬开。
+# 这就是用户要求的「不开就过不去、走不到后面楼层」的硬门槛。
+SPECIAL_DOOR_FLOOR = 16
 FLY_FLOOR = 11      # 唯一飞行器（1-based，11F 房间）
 BOSS_FLOOR = 21     # 顶层王座（1-based）
 
@@ -77,11 +81,13 @@ def want_door(n):   # 校验脚本与摘要共用的门色口径
 # 【为什么不塞满铁剑/铁盾/大血瓶】v0.9 刚按每层实测属性校准了逐层难度曲线，
 # 21 处暗门若每处 +10 攻防 / +200 HP，玩家 DEF 会提前越过怪 ATK，把「21/21 层掉血」
 # 打回 v0.8 的 100% 零伤。所以暗门以「钥匙 + 小额补给」为主，只留 3 处经典彩蛋。
+# v0.13：暗门轮换奖励移除炸弹（炸弹改为 12F 老者剧情解锁 + 商店购买的中后期能力），
+# 空出的档位换成金币——与「炸弹不再是地图拾取物」的口径一致。
 SECRET_REWARD = {
     0: ('key_y', '黄钥匙', 'secret_key'),
     1: ('potion_s', '小血瓶', 'secret_potion'),
     2: ('gold', '金币', 'secret_gold'),
-    3: ('bomb', '炸弹', 'secret_bomb'),
+    3: ('gold', '金币', 'secret_gold'),
 }
 
 
@@ -347,8 +353,11 @@ def place_entities(g, rng, floor_no, has_room, inner, special):
             g[inner[0][1]][inner[0][0]] = 'M'   # 法师（救援奖励）
             g[inner[1][1]][inner[1][0]] = 'P'
         elif kind == 'thief':
-            g[inner[0][1]][inner[0][0]] = 'T'   # 盗贼（救援奖励）
+            g[inner[0][1]][inner[0][0]] = 'T'   # 盗贼（v0.13 起救出后常驻，走任务线）
             g[inner[1][1]][inner[1][0]] = 'g'
+        elif kind == 'elder':
+            g[inner[0][1]][inner[0][0]] = 'E'   # v0.13：老者（救出后解锁炸弹 + 赠 1 枚）
+            g[inner[1][1]][inner[1][0]] = 'd'
         elif kind == 'codex':
             g[inner[0][1]][inner[0][0]] = 'I'   # 图鉴
             g[inner[1][1]][inner[1][0]] = 'a'
@@ -356,7 +365,11 @@ def place_entities(g, rng, floor_no, has_room, inner, special):
             g[inner[0][1]][inner[0][0]] = 'F'   # 唯一飞行器
             g[inner[1][1]][inner[1][0]] = 'd'
         else:  # treasure
-            for c, (x, y) in zip(['S', 'P', 'a'], inner[:3]):
+            loot = ['S', 'P', 'a']
+            # v0.13 盗贼任务线道具：13F 藏「锁匠工具」、19F 藏「钱袋」
+            if floor_no == 13: loot.append('j')
+            if floor_no == 19: loot.append('q')
+            for c, (x, y) in zip(loot, inner):
                 g[y][x] = c
         # 房门口守怪（中等，支线；打不过也不影响通关）
         g[9][6] = '4' if floor_no % 2 else '2'
@@ -443,7 +456,8 @@ def make_floor(floor_no):
         # 门即成为「上楼唯一入口」。封哪一侧不能写死：随机短内墙可能恰好把某个角落
         # 切出去（14F 实测封 (10,13) 会把 (8,13)(9,13) 困成孤岛），故两种摆法都试，
         # 取 flood_ok 通过的那一种，保证门永远挡路且地图永远连通。
-        door = door_char(floor_no)
+        # v0.13：16F 上楼口放「特殊封印门 Z」，三色钥匙开不了，只有盗贼任务线能撬开
+        door = 'Z' if floor_no == SPECIAL_DOOR_FLOOR else door_char(floor_no)
         placed = False
         for wall, gate in [((10, 13), (11, 12)), ((11, 12), (10, 13))]:
             ow, og = g[wall[1]][wall[0]], g[gate[1]][gate[0]]
@@ -521,44 +535,54 @@ def build():
         {'id': 'codex', 'ch': 'I', 'name': '怪物图鉴', 'effect': {'book': 1}},
         {'id': 'npc_mage', 'ch': 'M', 'name': '被困的法师', 'effect': {'def': 8, 'hp': 100}},
         {'id': 'npc_thief', 'ch': 'T', 'name': '被困的盗贼', 'effect': {'key': 'y', 'n': 3, 'gold': 40}},
+        # v0.13：老者（12F 房间）——救出后解锁炸弹能力（flag=2 BOMB_UNLOCK）并赠 1 枚；
+        # 任务道具走 applyEffect 的 eff.flag 通用通道写标志位（LOCKPICK=4 / MONEYBAG=8），
+        # 逻辑层盗贼任务状态机据这两个位推进，无需按 id 特判。
+        {'id': 'npc_elder', 'ch': 'E', 'name': '被困的老者', 'effect': {'flag': 2, 'bomb': 1}},
+        {'id': 'quest_lockpick', 'ch': 'j', 'name': '锁匠工具', 'effect': {'flag': 4}},
+        {'id': 'quest_moneybag', 'ch': 'q', 'name': '钱袋', 'effect': {'flag': 8}},
     ]
     # v0.9：8 种怪。基础数值只作「未缩放」兜底，运行时由 FLOOR_SCALE[层] × 权重派生。
     # 经典魔塔怪种分工：石头人高防低血（破防博弈）、法师/警卫真实伤害（无视防御）。
+    # v0.13：exp = 击杀经验（基础值，按 1~7F×1 / 8~14F×2 / 15~21F×3 楼层档放大，
+    # 全塔总经验约 900+，供 8F 法师处 30 经验/次兑换攻防血，量级与商店金币经济相当）。
     monsters = [
         {'id': 'm1', 'ch': '1', 'name': '史莱姆', 'hp': 20, 'atk': 8, 'def': 2, 'gold': 3,
-         'bg': '#4caf50', 'hpW': 0.85, 'atkW': 0.9, 'defW': 0.8},
+         'exp': 4, 'bg': '#4caf50', 'hpW': 0.85, 'atkW': 0.9, 'defW': 0.8},
         {'id': 'm2', 'ch': '2', 'name': '蝙蝠', 'hp': 35, 'atk': 14, 'def': 5, 'gold': 6,
-         'bg': '#7e57c2', 'hpW': 1.0, 'atkW': 1.0, 'defW': 1.0},
+         'exp': 6, 'bg': '#7e57c2', 'hpW': 1.0, 'atkW': 1.0, 'defW': 1.0},
         {'id': 'm4', 'ch': '4', 'name': '骷髅兵', 'hp': 50, 'atk': 20, 'def': 8, 'gold': 10,
-         'bg': '#b0bec5', 'hpW': 1.1, 'atkW': 1.05, 'defW': 1.1},
+         'exp': 9, 'bg': '#b0bec5', 'hpW': 1.1, 'atkW': 1.05, 'defW': 1.1},
         {'id': 'm6', 'ch': '6', 'name': '石头人', 'hp': 60, 'atk': 12, 'def': 26, 'gold': 14,
-         'bg': '#8d6e63', 'hpW': 0.7, 'atkW': 0.85, 'defW': 1.7},
+         'exp': 11, 'bg': '#8d6e63', 'hpW': 0.7, 'atkW': 0.85, 'defW': 1.7},
         {'id': 'm7', 'ch': '7', 'name': '兽人', 'hp': 55, 'atk': 24, 'def': 7, 'gold': 15,
-         'bg': '#d84315', 'hpW': 1.15, 'atkW': 1.15, 'defW': 0.9},
+         'exp': 10, 'bg': '#d84315', 'hpW': 1.15, 'atkW': 1.15, 'defW': 0.9},
         {'id': 'm5', 'ch': '5', 'name': '暗法师', 'hp': 45, 'atk': 26, 'def': 6, 'gold': 16,
-         'bg': '#5c6bc0', 'hpW': 0.9, 'atkW': 0.16, 'defW': 0.8, 'pierce': True},
+         'exp': 12, 'bg': '#5c6bc0', 'hpW': 0.9, 'atkW': 0.16, 'defW': 0.8, 'pierce': True},
         {'id': 'm8', 'ch': '8', 'name': '魔法警卫', 'hp': 50, 'atk': 20, 'def': 10, 'gold': 18,
-         'bg': '#00897b', 'hpW': 1.0, 'atkW': 0.20, 'defW': 1.0, 'pierce': True},
-        # 魔王：独立终局数值，不参与逐层缩放（经典魔塔 Boss 惯例）
+         'exp': 13, 'bg': '#00897b', 'hpW': 1.0, 'atkW': 0.20, 'defW': 1.0, 'pierce': True},
+        # 魔王：独立终局数值，不参与逐层缩放（经典魔塔 Boss 惯例）；通关即终局，经验无意义
         {'id': 'm3', 'ch': '3', 'name': '魔王', 'hp': BOSS_FINAL['hp'],
-         'atk': BOSS_FINAL['atk'], 'def': BOSS_FINAL['def'], 'gold': 0,
+         'atk': BOSS_FINAL['atk'], 'def': BOSS_FINAL['def'], 'gold': 0, 'exp': 0,
          'bg': '#e53935', 'bombImmune': True, 'noScale': True},
     ]
     tile_char = {
-        'Y': '门', 'B': '门', 'R': '门', 'G': '铁', 'A': '',
+        'Y': '门', 'B': '门', 'R': '门', 'G': '铁', 'A': '', 'Z': '封',
         'y': '钥', 'b': '钥', 'r': '钥',
         'p': '+', 'P': '++', 'a': '攻', 'd': '防', 's': '剑', 'S': '盾', 'g': '金',
         'F': '飞', 'o': '炸', 'I': '鉴', 'M': '法', 'T': '盗', 'H': '',
+        'E': '老', 'j': '具', 'q': '袋',
         'U': '↑', 'D': '↓', 'W': '王', 'N': '商',
     }
     tile_color = {
         '#': '#37474f', '.': '#1b2430', '@': '#1b2430',
-        'A': '#37474f', 'G': '#8d99a6',
+        'A': '#37474f', 'G': '#8d99a6', 'Z': '#7b5ea7',
         'Y': '#e6a23c', 'B': '#3a86e8', 'R': '#e5534b',
         'y': '#ffd54f', 'b': '#64b5f6', 'r': '#ef9a9a',
         'p': '#ef5350', 'P': '#e53935', 'a': '#ff5252', 'd': '#448aff',
         's': '#cfd8dc', 'S': '#90a4ae', 'g': '#ffca28',
         'F': '#4dd0e1', 'o': '#546e7a', 'I': '#ba68c8', 'M': '#7e57c2', 'T': '#8d6e63',
+        'E': '#bcaaa4', 'j': '#b0bec5', 'q': '#ffca28',
         'H': '#1b2430', 'U': '#66bb6a', 'D': '#8d6e63', 'W': '#ab47bc', 'N': '#26c6da',
     }
     # v0.9：主题接线（拼进 name，HUD / 图鉴 / 载入日志直接可见）
@@ -572,8 +596,8 @@ def build():
 
     data = {
         'meta': {
-            'schema': 4,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 5,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},
@@ -584,7 +608,7 @@ def build():
         'monsters': monsters,
         'items': items,
         'floors': floors,
-        'hero0': {'hp': 200, 'atk': 10, 'def': 10, 'gold': 0,
+        'hero0': {'hp': 200, 'atk': 10, 'def': 10, 'gold': 0, 'exp': 0, 'flags': 0,
                   'keys': {'y': 0, 'b': 0, 'r': 0}, 'fly': 0, 'bomb': 0, 'book': 0},
         'doorKey': {'Y': 'y', 'B': 'b', 'R': 'r', 'G': 'y'},
         'doorCost': {'Y': 1, 'B': 1, 'R': 1, 'G': IRON_KEY_COST},
@@ -600,13 +624,17 @@ def build():
     for i, f in enumerate(floors):
         entities = sum(1 for r in f['rows'] for c in r if c not in '#.@A')
         room = '有房间' if i in ROOM_FLOORS else ('王座' if i == 20 else '开放')
-        special = ['门' + {'Y': '黄', 'B': '蓝', 'R': '红', 'G': '铁'}[door_char(i + 1)]]
+        door = 'Z' if (i + 1) == SPECIAL_DOOR_FLOOR else door_char(i + 1)
+        special = ['门' + {'Y': '黄', 'B': '蓝', 'R': '红', 'G': '铁', 'Z': '封'}[door]]
         joined = ''.join(f['rows'])
         if 'A' in joined: special.append('暗门A')
         if 'I' in joined: special.append('图鉴I')
         if 'F' in joined: special.append('飞行器F')
         if 'M' in joined: special.append('法师M')
         if 'T' in joined: special.append('盗贼T')
+        if 'E' in joined: special.append('老者E')
+        if 'j' in joined: special.append('锁匠工具j')
+        if 'q' in joined: special.append('钱袋q')
         if 'N' in joined: special.append('商人N')
         print(f"  {i+1:2d}F {f['theme']:6s} {room:5s} 实体{entities:2d} " + ' '.join(special))
     total_F = sum(''.join(f['rows']).count('F') for f in floors)

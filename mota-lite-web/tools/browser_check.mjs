@@ -253,9 +253,11 @@ try {
   })()`), await txt('#battleList'))
   check('战斗预览徽章带怪物手册 tooltip（加防收益 / 临界 / 真实伤害）',
     await ev("[...document.querySelectorAll('#battleList .badge')].some(b => ['每 +1 防少掉','少挨一回合','真实伤害'].some(k => (b.title || '').includes(k)))"))
-  check('存档串为 v3 紧凑格式', (await txt('#savePreview')).startsWith('3|'), await txt('#savePreview'))
-  check('v3 存档含已探索段（出生层 0）', (await txt('#savePreview')).split('|')[3] === '0', await txt('#savePreview'))
-  check('v3 存档段数为 4', (await txt('#savePreview')).split('|').length === 4)
+  check('v0.13 存档串为 v4 格式', (await txt('#savePreview')).startsWith('4|'), await txt('#savePreview'))
+  check('v4 存档 head 恰好 16 段（含 exp / flags）',
+    (await txt('#savePreview')).split('|')[1].split(',').length === 16, await txt('#savePreview'))
+  check('v4 存档含已探索段（出生层 0）', (await txt('#savePreview')).split('|')[3] === '0', await txt('#savePreview'))
+  check('v4 存档段数为 4', (await txt('#savePreview')).split('|').length === 4)
   check('播放按钮未载入路线时禁用', await ev("document.querySelector('#btnPlay').disabled") === true)
   check('标签副标题由 texts.js 注入', (await txt('#headSub')).includes('212×520'))
   check('tagline 注入', (await txt('#tagline')).length > 4, await txt('#tagline'))
@@ -428,16 +430,24 @@ try {
   check('恢复提示条', (await txt('#tip')) === '获得 黄钥匙')
   check('退出后 localStorage 与进入前一致', (await ev("localStorage.getItem('mota_lite_web_v1')")) === SAVE_BEFORE)
 
-  // ---- J 存档导入（v3 / v2 / v1 三代兼容）----
+  // ---- J 存档导入：v0.13 只认 v4，v1~v3 旧档一律作废重开 ----
+  // 旧档若已救出 M/T/E 却带 flags=0，会与「常驻 NPC / 16F 封印门 Z」产生死档矛盾，
+  // 故 deserialize 直接返回 null；导入在弹确认之前就被拒绝，当前进度不受影响。
   await setVal('#saveInput', 'bad-save'); await accept('#btnImport')
   check('坏档安全拒绝', (await txt('#log')).includes('返回 null'), await txt('#log'))
-  await setVal('#saveInput', '2|2,1,1,999,50,50,0,0,0,0,0,0,0|'); await accept('#btnImport')
-  check('导入 v2 存档成功', (await txt('#iPos')).includes('3F') && (await txt('#iHero')) === '999 / 50 / 50', (await txt('#iPos')) + ' / ' + await txt('#iHero'))
-  check('v2 旧档 fly 语义兼容', (await txt('#iFly')) === '0', await txt('#iFly'))
-  await setVal('#saveInput', '1|0,1,1,200,10,10,0,1,0,0,0|'); await accept('#btnImport')
-  check('v1 旧档可读', (await txt('#iPos')).includes('1F') && (await txt('#iHero')) === '200 / 10 / 10', await txt('#iPos'))
+  const posBeforeLegacy = await txt('#iPos')
+  for (const [label, save] of [
+    ['v2', '2|2,1,1,999,50,50,0,0,0,0,0,0,0|'],
+    ['v1', '1|0,1,1,200,10,10,0,1,0,0,0|'],
+    ['v3', '3' + '|0,1,1,200,10,10,0,0,0,0,0,1,0,0||0']
+  ]) {
+    await setVal('#saveInput', save); await accept('#btnImport')
+    check(`v0.13 ${label} 旧档作废重开（deserialize 返回 null）`,
+      (await txt('#log')).includes('返回 null'), await txt('#log'))
+    check(`v0.13 ${label} 旧档不污染当前进度`, (await txt('#iPos')) === posBeforeLegacy, await txt('#iPos'))
+  }
   const TOP_SAVE = FLOOR_N - 1   // 顶层索引随层数变化，不硬编码
-  await setVal('#saveInput', '3|' + TOP_SAVE + ',3,4,96,20,13,0,0,0,0,2,0,0,0||' + TOP_SAVE); await accept('#btnImport')
+  await setVal('#saveInput', '4|' + TOP_SAVE + ',3,4,96,20,13,0,0,0,0,2,0,0,0,0,0||' + TOP_SAVE); await accept('#btnImport')
   check('读档到「已通关」存档遮罩正确', (await hidden('#over')) === false && (await txt('#overTitle')) === '通关')
 
   // ---- K 缩放（含 0.5× 手环观感档）----
@@ -462,11 +472,11 @@ try {
   check('隐藏剧情可关闭', (await hidden('#storyLayer')) === true)
 
   // 飞行器：v0.8 只能飞已探索过的楼层
-  await setVal('#saveInput', '3|0,1,1,200,10,10,0,0,0,0,0,1,0,0||0'); await accept('#btnImport')
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,1,0,0,0,0||0'); await accept('#btnImport')
   check('飞行器存档导入', (await txt('#iFly')).includes('已持有'), await txt('#iFly'))
   await key('f')
   check('未探索的楼层飞不过去', (await txt('#iPos')).includes('1F') && (await txt('#tip')).includes('已探索'), await txt('#tip'))
-  await setVal('#saveInput', '3|0,1,1,200,10,10,0,0,0,0,0,1,0,0||0.1'); await accept('#btnImport')
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,1,0,0,0,0||0.1'); await accept('#btnImport')
   await key('f')
   check('按 F 升到已探索的 2F', (await txt('#iPos')).includes('2F'), await txt('#iPos'))
   await closeStory()
@@ -475,29 +485,41 @@ try {
   await closeStory()
 
   // 炸弹：站在怪旁边引爆
-  await setVal('#saveInput', '3|0,' + MAP.bombSpot.x + ',' + MAP.bombSpot.y + ',200,10,10,0,0,0,0,0,0,1,0||0'); await accept('#btnImport')
+  await setVal('#saveInput', '4|0,' + MAP.bombSpot.x + ',' + MAP.bombSpot.y + ',200,10,10,0,0,0,0,0,0,1,0,0,0||0'); await accept('#btnImport')
   check('炸弹存档导入', (await txt('#iBomb')) === '1')
   await key('b')
   check('按 B 引爆炸弹', (await txt('#tip')).includes('炸弹'), await txt('#tip'))
   check('炸弹消耗后归零', (await txt('#iBomb')) === '0')
 
-  // 商店：点商人 -> 走到旁边 -> 弹交易框（英雄不踩到商人身上）
+  // 商店：v0.13 撞商店写 SHOP_SEEN、弹「常驻交易弹层」——隐藏「继续」、
+  //   购买后不关闭且原地刷新金币余额，只有点「离开」才关（英雄不踩到商人身上）。
   const sp = MAP.shop
-  await setVal('#saveInput', '3|' + sp.floor + ',' + sp.x + ',' + sp.y + ',200,10,10,20,0,0,0,0,0,0,0||' + sp.floor); await accept('#btnImport')
+  await setVal('#saveInput', '4|' + sp.floor + ',' + sp.x + ',' + sp.y + ',200,10,10,20,0,0,0,0,0,0,0,0,0||' + sp.floor); await accept('#btnImport')
   const posBeforeShop = await txt('#iPos')
   check('商人前置：英雄已站在商人旁边一格', posBeforeShop.includes(`(${sp.x},${sp.y})`), posBeforeShop)
+  check('v0.13 「购买」按钮开局隐藏（未遇商店）',
+    await ev("document.querySelector('#btnActShop').classList.contains('act-locked') && document.querySelector('#btnShop').classList.contains('act-locked')"))
   await cellClick(sp.sy * MAP.W + sp.sx)
   const shopOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===5})()", 10000)
-  check('点商人弹交易框（v0.12 四选一 + 离开 = 5 个动作）', shopOpen, await txt('#storyTitle'))
+  check('v0.13 点商人弹常驻交易框（4 商品 + 离开 = 5 个动作）', shopOpen, await txt('#storyTitle'))
   const shopLabels = await txt('#storyActions')
-  check('v0.12 商店提供攻击 / 防御 / 生命 / 黄钥匙四种商品',
-    ['攻击','防御','生命','黄钥匙'].every(k => shopLabels.includes(k)), shopLabels)
-  check('v0.12 商店标签带档位增量与固定价 20G',
+  check('v0.13 商店提供攻击 / 防御 / 生命 / 黄钥匙四种商品（炸弹未解锁）',
+    ['攻击','防御','生命','黄钥匙'].every(k => shopLabels.includes(k)) && !shopLabels.includes('炸弹'), shopLabels)
+  check('v0.13 商店标签带档位增量与固定价 20G',
     await ev("[...document.querySelectorAll('#storyActions button')].slice(0,4).every(b => b.textContent.includes('+') && b.textContent.includes('20G'))"), shopLabels)
   check('商人对话不把英雄挪到商人格', (await txt('#iPos')) === posBeforeShop, await txt('#iPos'))
+  check('v0.13 首次撞商店置 SHOP_SEEN 且「购买」按钮解锁',
+    (await ev("(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return !!(s.hero.flags & l.FLAG.SHOP_SEEN)})()")) &&
+    (await ev("!document.querySelector('#btnActShop').classList.contains('act-locked') && !document.querySelector('#btnShop').classList.contains('act-locked')")))
+  check('v0.13 常驻交易弹层隐藏「继续」按钮',
+    await ev("document.querySelector('#storyContinue').hidden === true"))
+  check('v0.13 常驻交易弹层显示金币余额行', (await txt('#storyStatus')).includes('金币 20 G'), await txt('#storyStatus'))
   await ev("document.querySelector('#storyActions button').click()")
   check('购买后攻击 +3 金币清零', (await txt('#iHero')) === '200 / 13 / 10' && (await txt('#iGold')) === '0', (await txt('#iHero')) + ' / ' + await txt('#iGold'))
-  check('购买后弹层关闭', (await hidden('#storyLayer')) === true)
+  check('v0.13 购买后弹层保持打开（可继续购买）', (await hidden('#storyLayer')) === false)
+  check('v0.13 购买后余额行原地刷新为「金币 0 G」', (await txt('#storyStatus')).includes('金币 0 G'), await txt('#storyStatus'))
+  await ev("document.querySelector('#storyActions button.story-leave').click()")
+  check('v0.13 只有点「离开」才关闭弹层', (await hidden('#storyLayer')) === true)
 
   // ---- L' 房间 NPC：法师 / 盗贼 真实点击交互（坐标全部运行期推导，不写死楼层/格子）----
   // 旧版只在 validate_logic 里测了 resolveStep 的奖励，宿主层「点格子 -> 走到旁边 -> 交互」链路没覆盖。
@@ -505,14 +527,14 @@ try {
   check('全塔定位到法师 M 与盗贼 T 及其相邻可站格', !!MAP.mage && !!MAP.thief,
     JSON.stringify({ mage: MAP.mage, thief: MAP.thief }))
   for (const npcSpec of [
-    { key: 'mage', label: '法师', hero: '300 / 10 / 18', keys: '0 / 0' },
-    { key: 'thief', label: '盗贼', hero: '200 / 10 / 10', keys: '3 / 40' }
+    { key: 'mage', label: '法师', ch: 'M', hero: '300 / 10 / 18', keys: '0 / 0' },
+    { key: 'thief', label: '盗贼', ch: 'T', hero: '200 / 10 / 10', keys: '3 / 40' }
   ]) {
     const np = MAP[npcSpec.key]
     if (!np) continue
-    // v3 存档：站在 NPC 相邻格，HERO0 属性，无道具，explored 只含该层（房间层可能 > 0）
-    const npcSave = '3|' + np.floor + ',' + np.sx + ',' + np.sy +
-      ',200,10,10,0,0,0,0,0,0,0,0||' + np.floor
+    // v4 存档：站在 NPC 相邻格，HERO0 属性，无道具，explored 只含该层（房间层可能 > 0）
+    const npcSave = '4|' + np.floor + ',' + np.sx + ',' + np.sy +
+      ',200,10,10,0,0,0,0,0,0,0,0,0,0||' + np.floor
     await setVal('#saveInput', npcSave); await accept('#btnImport')
     check(`${npcSpec.label}前置：英雄站在相邻可站格`,
       (await txt('#iPos')).includes(`(${np.sx},${np.sy})`), await txt('#iPos'))
@@ -527,7 +549,8 @@ try {
       const s = l.deserialize(localStorage.getItem('mota_lite_web_v1'));
       return { tile: l.tileAt(s, ${np.nx}, ${np.ny}), x: s.x, y: s.y, floor: s.floor };
     })()`)
-    check(`${npcSpec.label}格救出后清成地板`, npcAfter.tile === '.', npcAfter.tile)
+    check(`v0.13 救出后${npcSpec.label}常驻不清格（仍是 ${npcSpec.ch}）`,
+      npcAfter.tile === npcSpec.ch, npcAfter.tile)
     check(`v0.11 英雄救出${npcSpec.label}后停在原地相邻格（不踩进 NPC 原格）`,
       npcAfter.x === np.sx && npcAfter.y === np.sy && npcAfter.floor === np.floor, JSON.stringify(npcAfter))
     // 交互完即停：再等一拍步数不再增长（不偷偷继续自动行走）
@@ -540,7 +563,7 @@ try {
   check('图鉴浮层初始隐藏', (await hidden('#codexLayer')) === true)
   await click('#btnActCodex')
   check('未持有图鉴时点击给提示', (await hidden('#codexLayer')) === true && (await txt('#log')).includes('还没有图鉴'), await txt('#log'))
-  await setVal('#saveInput', '3|0,1,1,200,10,10,0,0,0,0,0,0,0,1||0'); await accept('#btnImport')
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,0,0,1,0,0||0'); await accept('#btnImport')
   await click('#btnActCodex')
   check('持有图鉴可打开浮层', (await hidden('#codexLayer')) === false)
   check('图鉴标题来自 texts.js', (await txt('#codexTitle')).includes('图鉴'), await txt('#codexTitle'))
@@ -571,7 +594,7 @@ try {
   // 1F 每类怪恰好 1 只，清掉下标即可让该类型存活数归零（下标由 MAP 探测现算）
   const clearCh = MAP.codexMon.types[0]
   const clearIdx = MAP.codexMon.firstMon[clearCh].idx
-  await setVal('#saveInput', '3|0,1,1,200,10,10,0,0,0,0,0,0,0,1|0:' + clearIdx + '|0'); await accept('#btnImport')
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,0,0,1,0,0|0:' + clearIdx + '|0'); await accept('#btnImport')
   await click('#btnActCodex')
   const codexRowsCleared = await ev("document.querySelectorAll('#codexList .codex-row').length")
   check('清掉一只怪后图鉴仍列出全部类型', codexRowsCleared === MAP.codexMon.types.length,
@@ -645,7 +668,7 @@ try {
   check('英雄走开后仍只有 1 个 is-hero', await ev("document.querySelectorAll('.cell.is-hero').length") === 1)
 
   // ---- O 二次确认弹窗 / 新游戏入口族（单槽覆盖语义）----
-  const SAVE_O_BASE = '3|0,1,1,999,50,50,0,0,0,0,0,0,0,0||0'
+  const SAVE_O_BASE = '4|0,1,1,999,50,50,0,0,0,0,0,0,0,0,0,0||0'
   await setVal('#saveInput', SAVE_O_BASE); await accept('#btnImport')
   const SAVE_O = await ev("localStorage.getItem('mota_lite_web_v1')")
   check('O 前置：载入 1F 出生点且 HP999',
@@ -697,10 +720,10 @@ try {
   check('清除存档弹确认', (await hidden('#confirmLayer')) === false && (await txt('#confirmTitle')).includes('清除存档'))
   await click('#confirmCancel')
   check('取消清除后存档仍在', (await ev("localStorage.getItem('mota_lite_web_v1')")) !== null)
-  await setVal('#saveInput', '3|2,1,1,888,50,50,0,0,0,0,0,0,0,0||0.1.2'); await click('#btnImport')
+  await setVal('#saveInput', '4|2,1,1,888,50,50,0,0,0,0,0,0,0,0,0,0||0.1.2'); await click('#btnImport')
   check('载入存档弹确认且正文含覆盖',
     (await hidden('#confirmLayer')) === false && (await txt('#confirmBody')).includes('覆盖'))
-  check('载入确认正文含存档串摘要', (await txt('#confirmBody')).includes('3|2,1,1'), await txt('#confirmBody'))
+  check('载入确认正文含存档串摘要', (await txt('#confirmBody')).includes('4|2,1,1'), await txt('#confirmBody'))
   await click('#confirmCancel')
   check('取消载入后仍停在 1F', (await txt('#iPos')).includes('1F'), await txt('#iPos'))
   await setVal('#saveInput', 'bad-save'); await click('#btnImport')
@@ -714,7 +737,7 @@ try {
   await click('#btnNewGameTop')
   await ev("document.querySelector('#confirmLayer').click()")
   check('点遮罩取消确认', (await hidden('#confirmLayer')) === true)
-  await setVal('#saveInput', '3|' + TOP_SAVE + ',3,4,96,20,13,0,0,0,0,2,0,0,0||' + TOP_SAVE); await accept('#btnImport')
+  await setVal('#saveInput', '4|' + TOP_SAVE + ',3,4,96,20,13,0,0,0,0,2,0,0,0,0,0||' + TOP_SAVE); await accept('#btnImport')
   check('已通关遮罩显示', (await hidden('#over')) === false)
   await click('#overBtn')
   check('结束遮罩重新开始也弹确认', (await hidden('#confirmLayer')) === false)
@@ -769,24 +792,25 @@ try {
   // ---- v0.10 门阻挡：运行期推导坐标 + 真实点击 ----
   const GATE = await ev(`(async()=>{
     const t = await import('./tables.js'), l = await import('./logic.js');
-    const rows = t.FLOORS[0].rows, D = ['Y','B','R','G'];
+    const rows = t.FLOORS[0].rows, D = ['Y','B','R','G','Z'];
     let gate = null;
     rows.forEach((r,y)=>[...r].forEach((c,x)=>{ if (D.includes(c)) gate = { x, y, c } }));
     const W = rows[0].length;
     let stand = null;
+    // v0.13：排除 U/D/W —— 1F 门旁正好是上楼格 U，若站上去「开门后到 U 可达」会失真
     for (const [dx,dy,dir] of [[0,1,'up'],[0,-1,'down'],[-1,0,'right'],[1,0,'left']]) {
       const sx = gate.x+dx, sy = gate.y+dy, ch = rows[sy][sx];
-      if (ch !== '#' && !l.isEntityTile(ch)) { stand = { x: sx, y: sy, dir }; break }
+      if (ch !== '#' && !l.isEntityTile(ch) && !'UDW'.includes(ch)) { stand = { x: sx, y: sy, dir }; break }
     }
     return { gate, stand, W, key: t.DOOR_KEY[gate.c] };
   })()`)
   check('1F 门与门口可站格运行期推导成功', !!GATE.gate && !!GATE.stand, JSON.stringify(GATE))
-  check('21 层门结构与三色/铁门分级（运行期从 tables.js 推导）', await ev(`(async()=>{
-    const t = await import('./tables.js'), D = ['Y','B','R','G'];
+  check('v0.13 21 层门结构：20 道钥匙门 + 16F 封印门 Z（运行期从 tables.js 推导）', await ev(`(async()=>{
+    const t = await import('./tables.js'), D = ['Y','B','R','G','Z'];
     return t.FLOORS.every((f,i)=>{
       const n=i+1, ds=[];
       f.rows.forEach((r,y)=>[...r].forEach((c,x)=>{ if (D.includes(c)) ds.push({c,x,y}) }));
-      const want = (n===7||n===14||n===21)?'G':(n<=7?'Y':(n<=14?'B':'R')), isRoom = f.rows[3].slice(3,10)==='#######';
+      const want = n===16 ? 'Z' : ((n===7||n===14||n===21)?'G':(n<=7?'Y':(n<=14?'B':'R'))), isRoom = f.rows[3].slice(3,10)==='#######';
       let at = false;
       if (n===21) at = ds.length===1 && ds[0].x===6 && ds[0].y===6 && f.rows[5][5]==='#' && f.rows[5][7]==='#';
       else if (isRoom) at = ds.length===1 && ds[0].x===6 && ds[0].y===8;
@@ -795,8 +819,10 @@ try {
       return ds.length===1 && ds[0].c===want && at;
     });
   })()`))
+  check('v0.13 封印门 Z 不在 doorKey 映射里（三色钥匙打不开）',
+    await ev("(async()=>{const t=await import('./tables.js');return !('Z' in t.DOOR_KEY)})()"))
   const gateIdx = GATE.gate.y * GATE.W + GATE.gate.x
-  const saveAtGate = ky => `3|0,${GATE.stand.x},${GATE.stand.y},200,10,10,0,${ky},0,0,0,0,0,0||0`
+  const saveAtGate = ky => `4|0,${GATE.stand.x},${GATE.stand.y},200,10,10,0,${ky},0,0,0,0,0,0,0,0||0`
   const tileNow = () => ev(`(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.tileAt(s,${GATE.gate.x},${GATE.gate.y})})()`)
   await setVal('#saveInput', saveAtGate(0)); await accept('#btnImport')
   check('未开门时点击寻路到上楼格不可达', await ev(`(async()=>{
@@ -846,7 +872,7 @@ try {
   const xyIn = async (x, y) => (await txt('#iPos')).includes(`(${x},${y})`)
   if (V11.mon) {
     // 高属性存档保证战斗必胜，英雄站在怪物相邻格；head 14 字段 v3 存档
-    const monSave = `3|0,${V11.mon.sx},${V11.mon.sy},9999,9999,9999,0,0,0,0,0,0,0,0||0`
+    const monSave = `4|0,${V11.mon.sx},${V11.mon.sy},9999,9999,9999,0,0,0,0,0,0,0,0,0,0||0`
     await setVal('#saveInput', monSave); await accept('#btnImport')
     await cellClick(V11.mon.idx)
     const won = await waitFor("document.querySelector('#tip').textContent.includes('胜 ')", 10000)
@@ -861,18 +887,22 @@ try {
   }
   if (V11.gate) {
     const ky = V11.key==='y'?1:0, kb = V11.key==='b'?1:0, kr = V11.key==='r'?1:0
-    const gateSave = `3|0,${V11.gate.sx},${V11.gate.sy},200,10,10,0,${ky},${kb},${kr},0,0,0,0||0`
+    const gateSave = `4|0,${V11.gate.sx},${V11.gate.sy},200,10,10,0,${ky},${kb},${kr},0,0,0,0,0,0||0`
     await setVal('#saveInput', gateSave); await accept('#btnImport')
     await cellClick(V11.gate.idx)
     await sleep(200)
-    check('v0.11 门仍开门即进入（通道语义不变）', await xyIn(V11.gate.x, V11.gate.y), await txt('#iPos'))
+    check('v0.13 开门后英雄停在原地（不占门格）',
+      (await xyIn(V11.gate.sx, V11.gate.sy)) && !(await xyIn(V11.gate.x, V11.gate.y)), await txt('#iPos'))
+    await cellClick(V11.gate.idx)
+    await sleep(200)
+    check('v0.13 再走一步才进入原门格', await xyIn(V11.gate.x, V11.gate.y), await txt('#iPos'))
   }
 
   // ---- v0.12 大字号适配手环屏：真实 computedStyle，不读 CSS 文本 ----
   await ev("document.getElementById('device').style.zoom = '1'")
   const FS = sel => ev(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});return e?parseFloat(getComputedStyle(e).fontSize):0})()`)
   const fontRows = [
-    ['.action-btn', 14], ['.action-hint', 12], ['.tip', 15], ['.cell-ch', 16],
+    ['.action-btn', 14], ['.tip', 15], ['.cell-ch', 16],
     ['.hud', 14], ['.hud-row-title', 15], ['.statusbar', 13],
     ['.story-title', 17], ['.story-body', 14], ['.story-continue', 15],
     ['.settings-title', 17], ['.settings-item', 15], ['.codex-close', 15],
@@ -884,18 +914,21 @@ try {
     const v = await FS(sel)
     if (!(v >= min)) fontBad.push(sel + ':' + v + '<' + min)
   }
-  check('v0.12 屏幕内 19 处文本全部达到新字号下限（按钮 14px 起）',
-    fontBad.length === 0, fontBad.join(' ') || '19 处全达标')
-  check('v0.12 按钮区改 3 列 × 3 行（56px 宽容纳 14px 字）', await ev(
-    "(()=>{const s=getComputedStyle(document.querySelector('.action-bar'));return s.gridTemplateColumns.split(' ').length===3&&s.gridTemplateRows.split(' ').length===4})()"))
-  check('v0.12 按钮区仍在 520px 屏幕内（top402 + 3×29 + 提示行）', await ev(
-    "(()=>{const b=document.querySelector('.action-bar');return parseFloat(getComputedStyle(b).top)+b.offsetHeight<=520})()"))
+  check('v0.13 屏幕内 18 处文本全部达到新字号下限（按钮 14px 起）',
+    fontBad.length === 0, fontBad.join(' ') || '18 处全达标')
+  // v0.13 底部修复：被胶囊圆角裁掉的小字节点整体删除，按钮区上移收窄、改 3 列自适应行
+  check('v0.13 被裁的 action-hint 小字节点已删除',
+    await ev("!document.querySelector('#actionHint') && !document.querySelector('.action-hint')"))
+  check('v0.13 按钮区改 3 列自适应行（51px 宽 / 27px 行 / top394 / width160）', await ev(
+    "(()=>{const s=getComputedStyle(document.querySelector('.action-bar'));return s.gridTemplateColumns.split(' ').length===3&&Math.round(parseFloat(s.gridAutoRows))===27&&Math.round(parseFloat(s.top))===394&&Math.round(parseFloat(s.width))===160})()"))
+  check('v0.13 按钮区（含全解锁 7 按钮 3 行）仍在胶囊圆角安全区内', await ev(
+    "(()=>{const b=document.querySelector('.action-bar');const s=getComputedStyle(b);return parseFloat(s.top)+b.offsetHeight<=481&&parseFloat(s.left)+parseFloat(s.width)<=186})()"))
 
   // ---- v0.12 暗门 A：真实点击「撞墙显形」 ----
   const SC = MAP.secret1f
   check('v0.12 1F 暗门与相邻可站格运行期推导成功', !!SC && !!SC.story && !!SC.item, JSON.stringify(SC))
   if (SC) {
-    await setVal('#saveInput', `3|0,${SC.sx},${SC.sy},200,10,10,0,0,0,0,0,0,0,0||0`); await accept('#btnImport')
+    await setVal('#saveInput', `4|0,${SC.sx},${SC.sy},200,10,10,0,0,0,0,0,0,0,0,0,0||0`); await accept('#btnImport')
     check('v0.12 暗门视觉与墙完全一致（精灵表复用 wall 帧）', await ev(`(async()=>{
       const a=await (await fetch('./assets/sprites.json')).json();
       return a.tileMap.A===a.tileMap['#'] && a.tileMap.A==='wall';
@@ -925,7 +958,7 @@ try {
     const tileIron = () => ev(`(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.tileAt(s,${IR.x},${IR.y})})()`)
     const keyYNow = () => ev("(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return s.hero.keys.y})()")
     // v3 head 恰好 14 段：floor,x,y,hp,atk,def,gold,ky,kb,kr,e,fly,bomb,book
-    const ironSave = ky => `3|${IR.floor},${IR.sx},${IR.sy},200,10,10,0,${ky},0,0,0,0,0,0||${IR.floor}`
+    const ironSave = ky => `4|${IR.floor},${IR.sx},${IR.sy},200,10,10,0,${ky},0,0,0,0,0,0,0,0||${IR.floor}`
     await setVal('#saveInput', ironSave(2)); await accept('#btnImport')
     await cellClick(IR.idx)
     await sleep(200)
@@ -943,19 +976,22 @@ try {
 
   // ---- v0.12 商店第四项：真实点「黄钥匙」 ----
   const SP2 = MAP.shop
-  await setVal('#saveInput', `3|${SP2.floor},${SP2.x},${SP2.y},200,10,10,20,0,0,0,0,0,0,0||${SP2.floor}`); await accept('#btnImport')
+  await setVal('#saveInput', `4|${SP2.floor},${SP2.x},${SP2.y},200,10,10,20,0,0,0,0,0,0,0,0,0||${SP2.floor}`); await accept('#btnImport')
   await cellClick(SP2.sy * MAP.W + SP2.sx)
   const keyShopOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===5})()", 10000)
-  check('v0.12 商店弹层 5 个动作（四商品 + 离开）', keyShopOpen)
+  check('v0.13 商店弹层 5 个动作（四商品 + 离开，炸弹未解锁）', keyShopOpen)
   if (keyShopOpen) {
-    check('v0.12 第四项标签是黄钥匙 +1（20G）', await ev(
+    check('v0.13 第四项标签是黄钥匙 +1（20G）', await ev(
       "document.querySelectorAll('#storyActions button')[3].textContent.includes('黄钥匙')"))
     await ev("document.querySelectorAll('#storyActions button')[3].click()")
     await sleep(180)
-    check('v0.12 买黄钥匙：keys.y +1 且金币清零',
+    check('v0.13 买黄钥匙：keys.y +1 且金币清零',
       (await ev("(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return s.hero.keys.y})()")) === 1 &&
       (await txt('#iGold')) === '0', await txt('#iGold'))
-    check('v0.12 购买后弹层关闭', (await hidden('#storyLayer')) === true)
+    check('v0.13 购买后弹层不关闭，可继续购买', (await hidden('#storyLayer')) === false)
+    check('v0.13 余额行刷新为「金币 0 G」', (await txt('#storyStatus')).includes('金币 0 G'), await txt('#storyStatus'))
+    await ev("document.querySelector('#storyActions button.story-leave').click()")
+    check('v0.13 点「离开」才关闭弹层', (await hidden('#storyLayer')) === true)
   }
 
   // ---- v0.12 配置层：DOOR_COST / SECRET / 铁门数量 ----
@@ -967,6 +1003,137 @@ try {
     MAP.secretCfgCount === 21 &&
     await ev(`(async()=>{const t=await import('./tables.js');return t.FLOORS.reduce((n,f)=>n+f.rows.join('').split('G').length-1,0)})()`) === 3,
     MAP.secretCfgCount + ' 处暗门')
+
+  // ---- v0.13 专项端到端：经验 / 法师兑换 / 老者炸弹 / 封印门 / 盗贼任务线 / 音量 ----
+  // 坐标全部运行期从 tables.js 现算（沿用本文件「不写死坐标」原则），存档串统一 v4 16 段 head。
+  // 这些场景先由 /tmp/probe13.mjs 探针实测成立，再固化成回归断言，避免把想当然的行为写进来。
+  const V13 = await ev(`(async()=>{
+    const t = await import('./tables.js'), l = await import('./logic.js');
+    const W = t.FLOORS[0].rows[0].length;
+    const stand = (rows, x, y) => {
+      for (const [dx,dy] of [[0,1],[0,-1],[-1,0],[1,0]]) {
+        const sx=x+dx, sy=y+dy, c=rows[sy] && rows[sy][sx];
+        if (c && c!=='#' && !l.isEntityTile(c) && !'UDW'.includes(c)) return {sx,sy};
+      }
+      return null;
+    };
+    const find = ch => {
+      for (let f=0; f<t.FLOORS.length; f++) {
+        const rows=t.FLOORS[f].rows;
+        for (let y=0;y<rows.length;y++) for (let x=0;x<W;x++) if (rows[y][x]===ch) {
+          const s=stand(rows,x,y);
+          if (s) return {floor:f,x,y,idx:y*W+x,sx:s.sx,sy:s.sy};
+        }
+      }
+      return null;
+    };
+    // 1F 第一只怪及其相邻可站格（用高属性存档保证必胜，exp 用 monsterExp 现算）
+    let mon=null;
+    const r0=t.FLOORS[0].rows;
+    for (let y=0;y<r0.length&&!mon;y++) for (let x=0;x<W;x++) {
+      const c=r0[y][x], m=t.monsterByCh(c);
+      if (!m) continue;
+      const s=stand(r0,x,y);
+      if (s) { mon={floor:0,x,y,idx:y*W+x,sx:s.sx,sy:s.sy,exp:l.monsterExp(m,0)}; break; }
+    }
+    return { E:find('E'), j:find('j'), q:find('q'), Z:find('Z'), mon, W };
+  })()`)
+  check('v0.13 专项：老者 E / 任务道具 j q / 封印门 Z / 1F 怪坐标运行期推导成功',
+    !!V13.E && !!V13.j && !!V13.q && !!V13.Z && !!V13.mon,
+    JSON.stringify({ E:V13.E, j:V13.j, q:V13.q, Z:V13.Z, mon:V13.mon }))
+
+  // 前面段落可能残留剧情队列，先点「继续」/「离开」清空，保证本段弹层时序干净
+  await closeStory()
+  await ev("(()=>{const l=document.querySelector('#storyLayer');if(l&&!l.hidden){const b=document.querySelector('#storyActions button.story-leave');if(b)b.click()}})()")
+  check('v0.13 专项起始：无残留剧情浮层', (await hidden('#storyLayer')) === true)
+
+  // (1) 音量 0.2（源码静态确认，与 validate_version 双重把关）
+  check('v0.13 音量由 0.45 降到 0.2', await ev(
+    "(async()=>{const s=await (await fetch('./app.js')).text();return s.includes('g.gain.value = 0.2')})()"))
+
+  // (2) 打怪获得经验 + 金币，HUD / 工作台实时读数
+  //     战斗胜利时 step() 把 render() 推迟到 460ms 动画之后，故用 waitFor 等真实刷新，不写死 sleep
+  await setVal('#saveInput', `4|0,${V13.mon.sx},${V13.mon.sy},9999,9999,9999,0,0,0,0,0,0,0,0,0,0||0`); await accept('#btnImport')
+  check('v0.13 打怪前置：HUD 经验为 E0', (await txt('#hudExp')) === 'E0', await txt('#hudExp'))
+  await cellClick(V13.mon.idx)
+  const won13 = await waitFor("document.querySelector('#tip').textContent.includes('胜 ')", 10000)
+  check('v0.13 点击怪物触发战斗胜利', won13, await txt('#tip'))
+  check('v0.13 战斗结算文案含 +EXP 与 +G',
+    (await txt('#tip')).includes('EXP') && (await txt('#tip')).includes('G'), await txt('#tip'))
+  const monState = await ev("(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return {exp:s.hero.exp,gold:s.hero.gold}})()")
+  check('v0.13 打怪经验按 monsterExp 入账', monState.exp === V13.mon.exp,
+    monState.exp + ' / 期望 ' + V13.mon.exp)
+  check('v0.13 打怪金币同步入账', monState.gold > 0, String(monState.gold))
+  const expHud = await waitFor(`document.querySelector('#hudExp').textContent === 'E${V13.mon.exp}'`, 5000)
+  check('v0.13 战斗动画结束后 HUD 经验实时刷新', expHud, await txt('#hudExp'))
+  check('v0.13 工作台经验读数与 HUD 一致', (await txt('#iExp')) === String(V13.mon.exp), await txt('#iExp'))
+
+  // (3) 法师常驻兑换：exp=90 / flags=MAGE_FREED，撞 M 弹常驻弹层，隐藏「继续」、购买后不关
+  const mg = MAP.mage
+  await setVal('#saveInput', `4|${mg.floor},${mg.sx},${mg.sy},200,10,10,0,0,0,0,0,0,0,0,90,16||${mg.floor}`); await accept('#btnImport')
+  check('v0.13 法师前置：HUD 经验 E90 / 工作台 90',
+    (await txt('#hudExp')) === 'E90' && (await txt('#iExp')) === '90', await txt('#hudExp'))
+  await cellClick(mg.idx)
+  const mageOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===4})()", 10000)
+  check('v0.13 已救出的法师撞上去弹兑换界面（3 商品 + 离开 = 4 动作）', mageOpen, await txt('#storyTitle'))
+  check('v0.13 法师兑换界面隐藏「继续」按钮', await ev("document.querySelector('#storyContinue').hidden === true"))
+  check('v0.13 法师兑换界面显示经验余额行', (await txt('#storyStatus')).includes('经验 90 EXP'), await txt('#storyStatus'))
+  await ev("document.querySelector('#storyActions button').click()")
+  const mageBought = await waitFor("document.querySelector('#storyStatus').textContent.includes('经验 60 EXP')", 5000)
+  check('v0.13 法师兑换扣 30 EXP（90→60）', mageBought, await txt('#storyStatus'))
+  check('v0.13 法师兑换攻击 +3（10→13）', await ev(
+    "(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return s.hero.exp===60&&s.hero.atk===13})()"))
+  check('v0.13 法师兑换后弹层保持打开（可继续兑换）', (await hidden('#storyLayer')) === false)
+  await ev("document.querySelector('#storyActions button.story-leave').click()")
+  check('v0.13 法师界面只有点「离开」才关闭', (await hidden('#storyLayer')) === true)
+
+  // (4) 老者 E：救出后 BOMB_UNLOCK + 赠 1 枚炸弹 + 炸弹按钮解锁（地图已无炸弹拾取）
+  const el = V13.E
+  await setVal('#saveInput', `4|${el.floor},${el.sx},${el.sy},200,10,10,0,0,0,0,0,0,0,0,0,0||${el.floor}`); await accept('#btnImport')
+  check('v0.13 老者前置：「炸弹」按钮开局隐藏',
+    await ev("document.querySelector('#btnActBomb').classList.contains('act-locked') && document.querySelector('#btnBomb').classList.contains('act-locked')"))
+  await cellClick(el.idx)
+  const elderDone = await waitFor("document.querySelector('#tip').textContent.includes('已救出 被困的老者')", 10000)
+  check('v0.13 撞老者触发「已救出」', elderDone, await txt('#tip'))
+  check('v0.13 老者置 BOMB_UNLOCK 并赠 1 枚炸弹、老者格清成地板', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return !!(s.hero.flags & l.FLAG.BOMB_UNLOCK) && s.hero.bomb>=1 && l.tileAt(s,${el.x},${el.y})==='.'})()`))
+  check('v0.13 救出老者后「炸弹」按钮解锁', await ev(
+    "!document.querySelector('#btnActBomb').classList.contains('act-locked') && !document.querySelector('#btnBomb').classList.contains('act-locked')"))
+  check('v0.13 老者解锁后商店第 5 项「炸弹」可购（SHOP_GOODS 含 bomb）', await ev(
+    "(async()=>{const l=await import('./logic.js');return l.SHOP_GOODS.some(g=>g.kind==='bomb')})()"))
+  await closeStory()
+
+  // (5) 封印门 Z：三色钥匙都打不开、门不动、不扣钥匙、英雄停原地
+  const zl = V13.Z
+  await setVal('#saveInput', `4|${zl.floor},${zl.sx},${zl.sy},200,10,10,0,3,3,3,0,0,0,0,0,0||${zl.floor}`); await accept('#btnImport')
+  const posBeforeZ = await txt('#iPos')
+  await cellClick(zl.idx)
+  const zTipped = await waitFor("document.querySelector('#tip').textContent.includes('符文锁')", 10000)
+  check('v0.13 撞封印门 Z 提示「三色钥匙都对不上」', zTipped, await txt('#tip'))
+  check('v0.13 封印门 Z 不被打开、三色钥匙不扣、英雄停在原地', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.tileAt(s,${zl.x},${zl.y})==='Z' && s.hero.keys.y===3 && s.x===${zl.sx} && s.y===${zl.sy}})()`))
+  check('v0.13 撞封印门不把英雄挪到门格', (await txt('#iPos')) === posBeforeZ, await txt('#iPos'))
+  await closeStory()
+
+  // (6) 盗贼任务线：用 v4 存档伪造任务阶段，专注验证「交工具开 16F 封印门」与「交钱袋离塔」；
+  //     救出盗贼 / 常驻不清格已由前面 L' 段真实点击覆盖，这里不重复。
+  const th = MAP.thief
+  // stage1(bit5=32) + LOCKPICK(4) = 36
+  await setVal('#saveInput', `4|${th.floor},${th.sx},${th.sy},200,10,10,0,0,0,0,0,0,0,0,0,36||${th.floor}`); await accept('#btnImport')
+  await cellClick(th.idx)
+  const doorOpened = await waitFor("document.querySelector('#tip').textContent.includes('16F 的封印门，开了')", 10000)
+  check('v0.13 交锁匠工具给盗贼：提示 16F 封印门已开', doorOpened, await txt('#tip'))
+  check('v0.13 交工具后盗贼阶段 1→2 且 16F 封印门 Z 被远程清成地板', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.thiefStage(s.hero)===2 && l.tileAt({...s,floor:${V13.Z.floor}},${V13.Z.x},${V13.Z.y})==='.'})()`))
+  await closeStory()
+  // stage2(bit6=64) + MONEYBAG(8) = 72
+  await setVal('#saveInput', `4|${th.floor},${th.sx},${th.sy},200,10,10,0,0,0,0,0,0,0,0,0,72||${th.floor}`); await accept('#btnImport')
+  await cellClick(th.idx)
+  const thiefLeft = await waitFor("document.querySelector('#tip').textContent.includes('消失在暗道')", 10000)
+  check('v0.13 交钱袋后盗贼离塔（提示谢礼）', thiefLeft, await txt('#tip'))
+  check('v0.13 盗贼阶段 2→3、T 格清成地板、谢礼 +300HP/+5攻/+5防', await ev(
+    `(async()=>{const l=await import('./logic.js');const s=l.deserialize(localStorage.getItem('mota_lite_web_v1'));return l.thiefStage(s.hero)===3 && l.tileAt(s,${th.nx},${th.ny})==='.' && s.hero.hp===500 && s.hero.atk===15 && s.hero.def===15})()`))
+  await closeStory()
 
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {

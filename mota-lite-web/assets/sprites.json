@@ -2,10 +2,10 @@
   "file": "sprites.png",
   "tile": 28,
   "cols": 8,
-  "rows": 5,
+  "rows": 6,
   "width": 224,
-  "height": 140,
-  "count": 39,
+  "height": 168,
+  "count": 43,
   "frames": {
     "wall": {
       "x": 0,
@@ -223,21 +223,45 @@
       "w": 28,
       "h": 28
     },
-    "fx_hit": {
+    "npc_elder": {
       "x": 112,
       "y": 112,
       "w": 28,
       "h": 28
     },
-    "fx_boom": {
+    "lockpick": {
       "x": 140,
       "y": 112,
       "w": 28,
       "h": 28
     },
-    "fx_pick": {
+    "moneybag": {
       "x": 168,
       "y": 112,
+      "w": 28,
+      "h": 28
+    },
+    "door_seal": {
+      "x": 196,
+      "y": 112,
+      "w": 28,
+      "h": 28
+    },
+    "fx_hit": {
+      "x": 0,
+      "y": 140,
+      "w": 28,
+      "h": 28
+    },
+    "fx_boom": {
+      "x": 28,
+      "y": 140,
+      "w": 28,
+      "h": 28
+    },
+    "fx_pick": {
+      "x": 56,
+      "y": 140,
       "w": 28,
       "h": 28
     }
@@ -278,6 +302,10 @@
     "H": "hidden",
     "I": "codex",
     "M": "npc_mage",
-    "T": "npc_thief"
+    "T": "npc_thief",
+    "E": "npc_elder",
+    "j": "lockpick",
+    "q": "moneybag",
+    "Z": "door_seal"
   }
 }

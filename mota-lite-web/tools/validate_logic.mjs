@@ -3,7 +3,7 @@
 // 用法：node tools/validate_logic.mjs
 //
 // 覆盖：配置表合法性、楼梯双向配对、每层可达性、HIDDEN 坐标、通关路线逐步重放、
-//       可选机制（隐藏/飞行器/炸弹/商店/图鉴）、存档 v3 往返与 v2/v1 旧档兼容、最坏存档体积。
+//       可选机制（隐藏/飞行器/炸弹/商店/图鉴）、存档 v4 往返与 v1~v3 旧档作废、最坏存档体积。
 // 注意：本脚本校验的是在线版自己的 logic.js / tables.js（与 M1 基线已分叉，见 spec 附 D）。
 
 import {
@@ -14,6 +14,7 @@ import {
 import {
   CONFIG, newGame, resolveStep, calcBattle, scaledMon, battleHint, tileAt, buildCells,
   useFly, useBomb, shopBuy, shopOffer, shopTier, SHOP_GOODS,
+  mageBuy, MAGE_GOODS, monsterExp, FLAG, thiefStage,
   serialize, deserialize, isWalkable, isEntityTile
 } from '../logic.js'
 import { findSolution, findPath } from '../solver.js'
@@ -34,8 +35,9 @@ function eq(a, b, name) { ok(name, a === b, a === b ? String(a) : 'got ' + JSON.
 
 console.log('=== 1. 配置表合法性 ===')
 const KNOWN = new Set([
-  '#', '.', '@', 'U', 'D', 'W', 'N', 'H', 'F', 'o', 'A',
+  '#', '.', '@', 'U', 'D', 'W', 'N', 'H', 'F', 'o', 'A', 'Z',   // v0.13：16F 封印门 Z
   ...Object.keys(DOOR_KEY), ...Object.keys(DOOR_KEY).map(k => k.toLowerCase()),
+  // E / j / q 来自 ITEMS（老者 / 锁匠工具 / 钱袋），随表自动进入 KNOWN
   ...ITEMS.map(i => i.ch), ...MONSTERS.map(m => m.ch)
 ])
 ok('楼层数 = 21（对齐原版魔塔层数）', FLOORS.length === 21, FLOORS.length + ' 层')
@@ -273,16 +275,34 @@ console.log('\n=== 6. 可选机制 ===')
   const r = shopBuy(s)
   eq(r.state.hero.gold, 0, '扣 ' + CONFIG.SHOP_COST + ' 金币')
   eq(r.state.hero.atk, HERO0.atk + CONFIG.SHOP_ATK, '攻击 +' + CONFIG.SHOP_ATK)
-  // v0.9 攻/防/生命三选一 + 高楼层同价更高回报；v0.12 加第 4 项黄钥匙（钥匙经济）
-  ok('商店提供四种商品（攻/防/生命/黄钥匙）',
-    SHOP_GOODS.length === 4 && SHOP_GOODS.map(g => g.kind).join(',') === 'atk,def,hp,key')
-  SHOP_GOODS.filter(g => g.kind !== 'key').forEach(g => {
+  // v0.13：攻/防/生命/黄钥匙 + 炸弹（救出老者后解锁）共 5 项
+  ok('商店提供五种商品（攻/防/生命/黄钥匙/炸弹）',
+    SHOP_GOODS.length === 5 && SHOP_GOODS.map(g => g.kind).join(',') === 'atk,def,hp,key,bomb')
+  SHOP_GOODS.filter(g => g.kind !== 'key' && g.kind !== 'bomb').forEach(g => {
     let t = newGame(); t.hero.gold = CONFIG.SHOP_COST
     const before = t.hero[g.stat]
     const rr = shopBuy(t, g.kind)
     eq(rr.state.hero[g.stat] - before, shopOffer(g.kind, 0).amount,
       '购买' + g.label + '按档位增量生效')
   })
+  // v0.13 炸弹：未救老者（BOMB_UNLOCK=0）商人拒卖；解锁后固定 30G / +1
+  {
+    ok('炸弹报价固定 1 枚 / 30G（不随楼层加量）',
+      shopOffer('bomb', 0).amount === 1 && shopOffer('bomb', 0).cost === CONFIG.BOMB_COST &&
+      shopOffer('bomb', 20).cost === CONFIG.BOMB_COST)
+    let locked = newGame(); locked.hero.gold = 999
+    const rLock = shopBuy(locked, 'bomb')
+    eq(rLock.state.hero.bomb, 0, '未解锁炸弹时商人拒卖、不扣金币')
+    ok('未解锁时给出「先救老者」提示',
+      rLock.events.some(e => e.t === 'msg' && e.text.includes('老者')),
+      rLock.events.map(e => e.text).join(' / '))
+    eq(rLock.state.hero.gold, 999, '拒卖不扣金币')
+    let unlocked = newGame(); unlocked.hero.gold = CONFIG.BOMB_COST
+    unlocked.hero.flags |= FLAG.BOMB_UNLOCK
+    const rBuy = shopBuy(unlocked, 'bomb')
+    eq(rBuy.state.hero.bomb, 1, '解锁后买炸弹 +1')
+    eq(rBuy.state.hero.gold, 0, '买炸弹扣 ' + CONFIG.BOMB_COST + ' 金币')
+  }
   {
     let t = newGame(); t.hero.gold = CONFIG.KEY_COST
     const before = t.hero.keys.y
@@ -356,7 +376,15 @@ console.log('\n=== 6.5 图鉴 / NPC / 商店阻挡（v0.8）===')
   eq(rm.state.hero.def, HERO0.def + 8, '救出法师：防御 +8')
   eq(rm.state.hero.hp, HERO0.hp + 100, '救出法师：生命 +100')
   ok('救出 NPC 用「已救出」文案', rm.events.some(e => e.t === 'msg' && e.text.startsWith('已救出')), rm.events.map(e => e.text).join(' / '))
-  eq(tileAt(rm.state, mage.x, mage.y), '.', 'NPC 救出后清成地板')
+  // v0.13：法师 M / 盗贼 T 救出后常驻（不清格），可反复撞上去对话 / 兑换
+  eq(tileAt(rm.state, mage.x, mage.y), 'M', 'v0.13 法师救出后常驻不清格')
+  ok('救出法师置 MAGE_FREED 标志位', !!(rm.state.hero.flags & FLAG.MAGE_FREED))
+  const rm2 = resolveStep(rm.state, mageSide.dir)
+  eq(rm2.state.hero.def, HERO0.def + 8, '再次撞法师不重复发防御奖励')
+  eq(tileAt(rm2.state, mage.x, mage.y), 'M', '再次撞法师格仍是 M')
+  ok('再次撞法师给出「积攒的经验」兑换提示',
+    rm2.events.some(e => e.t === 'msg' && e.text.includes('经验')),
+    rm2.events.map(e => e.text).join(' / '))
 
   // 商店：N 不可踩上去（撞上去只对话、英雄不动）
   const shopPos = (() => {
@@ -468,40 +496,36 @@ console.log('\n=== 7. buildCells / 存档 ===')
 {
   const s = newGame()
   const text = serialize(s)
-  ok('存档为 v3 格式', text.startsWith('3|'), text)
-  eq(text.split('|').length, 4, 'v3 四段：版本 | head | 变更集 | 已探索')
-  eq(text.split('|')[3], '0', 'v3 已探索段初始只有出生层')
+  ok('存档为 v4 格式', text.startsWith('4|'), text)
+  eq(text.split('|').length, 4, 'v4 四段：版本 | head | 变更集 | 已探索')
+  eq(text.split('|')[3], '0', 'v4 已探索段初始只有出生层')
+  eq(text.split('|')[1].split(',').length, 16, 'v4 head 16 段（较 v3 追加 exp / flags）')
   const back = deserialize(text)
   ok('serialize -> deserialize 往返可用', !!back && JSON.stringify(back.hero) === JSON.stringify(s.hero))
-  eq(back.v, 3, 'deserialize 标记 v3')
+  eq(back.v, 4, 'deserialize 标记 v4')
   eq(JSON.stringify(back.explored), JSON.stringify(s.explored), '已探索楼层往返一致')
-  eq(back.hero.book, 0, 'v3 带 book 字段（初始未持有图鉴）')
+  eq(back.hero.book, 0, 'v4 带 book 字段（初始未持有图鉴）')
+  eq(back.hero.exp, 0, 'v4 带 exp 字段（初始经验 0）')
+  eq(back.hero.flags, 0, 'v4 带 flags 字段（初始标志位 0）')
 
-  // v2 旧档兼容（v0.5~v0.7）：没有 book 段、没有 explored 段
-  const v2 = deserialize('2|0,1,1,200,10,10,0,1,0,0,0,1,2|0:20.21')
-  ok('v2 旧档可读', !!v2, v2 ? 'v=' + v2.v : 'null')
-  eq(v2 && v2.hero.book, 0, 'v2 旧档补 book=0')
-  eq(v2 && v2.hero.fly, 1, 'v2 旧档 fly 保留')
-  eq(v2 && v2.opened[0][20], '.', 'v2 旧档变更集正确复原')
-  ok('v2 旧档按「当前层 + 有清格记录的层」推断已探索',
-    !!v2 && v2.explored[0] === 1 && Object.keys(v2.explored).length === 1,
-    v2 ? Object.keys(v2.explored).join(',') : 'null')
-
-  // v1 旧档兼容（M1 / 在线版 v0.3）
-  const v1 = deserialize('1|0,1,1,200,10,10,0,1,0,0,0|0:43')
-  ok('v1 旧档可读', !!v1, v1 ? 'v=' + v1.v : 'null')
-  eq(v1 && v1.hero.fly, 0, 'v1 旧档补 fly=0')
-  eq(v1 && v1.hero.bomb, 0, 'v1 旧档补 bomb=0')
-  eq(v1 && v1.hero.book, 0, 'v1 旧档补 book=0')
-  eq(v1 && v1.opened[0][43], '.', 'v1 旧档变更集正确复原')
+  // v0.13：只认 v4，v1~v3 旧档一律作废重开（用户授权「开发阶段格式调整可放弃旧存档」）。
+  // 旧档若已救出 M/T/E 却带 flags=0，会与常驻 NPC / 16F 封印门 Z 产生不可解的死档。
+  const legacy = [
+    '1|0,1,1,200,10,10,0,1,0,0,0|0:43',
+    '2|0,1,1,200,10,10,0,1,0,0,0,1,2|0:20.21',
+    '3|0,1,1,200,10,10,0,0,0,0,0,0,0,0||0'
+  ]
+  ok('v1~v3 旧档一律作废（避免封印门死档）', legacy.every(t => deserialize(t) === null))
 
   ok('坏档安全返回 null',
-    deserialize('{bad json') === null && deserialize('9|0|') === null && deserialize('2|1,2|') === null)
-  ok('v3 段数不足判坏档', deserialize('3|0,1,1,200,10,10,0,0,0,0,0,0,0,0|') === null)
-  ok('v3 已探索段含非法楼层判坏档', deserialize('3|0,1,1,200,10,10,0,0,0,0,0,0,0,0||0.99') === null)
-  ok('book > 1 判坏档', deserialize('3|0,1,1,200,10,10,0,0,0,0,0,0,0,2||0') === null)
+    deserialize('{bad json') === null && deserialize('9|0|') === null && deserialize('4|1,2|') === null)
+  ok('v4 head 段数不足判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0|') === null)
+  ok('v4 已探索段含非法楼层判坏档',
+    deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0.99') === null)
+  ok('book > 1 判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,2,0,0||0') === null)
+  ok('flags > 127 判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,128||0') === null)
 
-  // 最坏存档（21 层通关态，实测约 1.0KB）
+  // 最坏存档（21 层通关态，v4 实测约 1.1KB）
   const worst = sol ? serialize(sol.state) : text
   const bytes = new Blob([worst]).size
   ok('最坏存档 < 在线版 SAVE_LIMIT', bytes < CONFIG.SAVE_LIMIT, bytes + ' B / ' + CONFIG.SAVE_LIMIT + ' B')
@@ -515,13 +539,18 @@ console.log('\n=== 7. buildCells / 存档 ===')
     JSON.stringify(backWin.opened) === JSON.stringify(sol.state.opened) &&
     Object.keys(backWin.explored).length === 21)
   ok('通关态确实拿到了图鉴', !!backWin && backWin.hero.book === 1)
+  ok('通关存档 exp / flags 往返一致', !!backWin &&
+    backWin.hero.exp === sol.state.hero.exp && backWin.hero.flags === sol.state.hero.flags,
+    backWin ? backWin.hero.exp + ' EXP / flags=' + backWin.hero.flags : 'null')
 
-  const TOP_SAVE = FLOORS.length - 1   // 顶层索引随层数变化，不再硬编码 9
-  // 炸弹仍可持有多个；飞行器在 v0.8 收敛为 0/1，但旧档里的历史大值不能判坏
-  const manyBomb = '3|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,1,15,1||' + TOP_SAVE
+  const TOP_SAVE = FLOORS.length - 1
+  // 炸弹仍可持有多个；flags 位字段上限 127
+  const manyBomb = '4|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,1,15,1,0,0||' + TOP_SAVE
   ok('bomb 为持有数量（>1 合法）', !!deserialize(manyBomb) && deserialize(manyBomb).hero.bomb === 15)
-  ok('旧档 fly 大值仍可读（历史遗留）', deserialize('2|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,12,15|') !== null)
-  ok('fly / bomb 异常大数仍判坏档', deserialize('2|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,100,0|') === null)
+  ok('fly 历史大值仍可读（上限 99）',
+    deserialize('4|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,12,15,1,0,0||' + TOP_SAVE) !== null)
+  ok('fly / bomb 异常大数仍判坏档',
+    deserialize('4|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,100,0,1,0,0||' + TOP_SAVE) === null)
 }
 
 console.log('\n=== 8. 通关记录（records.js 纯逻辑）===')
@@ -569,9 +598,10 @@ console.log('\n=== 8. 通关记录（records.js 纯逻辑）===')
 
 console.log('\n=== 9. v0.10 门机制 / 设置持久化 ===')
 {
-  const D = ['Y', 'B', 'R', 'G'], K = ['y', 'b', 'r']
-  const wantDoor12 = n => (n === 7 || n === 14 || n === 21) ? 'G'
-    : (n <= 7 ? 'Y' : (n <= 14 ? 'B' : 'R'))
+  // v0.13：16F 的三色门被封印门 Z 取代（仍在 U 上方的唯一入口），把 Z 一并纳入门字符
+  const D = ['Y', 'B', 'R', 'G', 'Z'], K = ['y', 'b', 'r']
+  const wantDoor12 = n => n === 16 ? 'Z'
+    : ((n === 7 || n === 14 || n === 21) ? 'G' : (n <= 7 ? 'Y' : (n <= 14 ? 'B' : 'R')))
   const doorsOf = f => {
     const out = []
     f.rows.forEach((r, y) => [...r].forEach((c, x) => { if (D.includes(c)) out.push({ c, x, y }) }))
@@ -614,13 +644,21 @@ console.log('\n=== 9. v0.10 门机制 / 设置持久化 ===')
     .find(p => { const ch = tileAt(withKey, p.x, p.y); return ch !== '#' && !isEntityTile(ch) })
   ok('门旁有可站格', !!stand)
   if (stand) {
-    const mk = ky => deserialize(`3|0,${stand.x},${stand.y},200,10,10,0,${ky},0,0,0,0,0,0||0`)
+    // v0.13：存档升到 v4（head 16 段，末尾追加 exp / flags），旧 v3 串 deserialize 会返回 null
+    const mk = ky => deserialize(`4|0,${stand.x},${stand.y},200,10,10,0,${ky},0,0,0,0,0,0,0,0||0`)
     const r = resolveStep(mk(1), stand.dir)
     ok('主动撞门：扣钥匙 + 门变地板 + 发 save',
       r.events.some(e => e.t === 'msg' && e.text === '门已打开') &&
       tileAt(r.state, gate0.x, gate0.y) === '.' &&
       r.state.hero.keys[DOOR_KEY[gate0.c]] === 0 && r.events.some(e => e.t === 'save'))
-    ok('开门后点击模式可到 U', findPath(r.state, new Set([U.x + ',' + U.y]), { blockEntities: true }).path !== null)
+    ok('v0.13 开门后停在原地（不占门格）',
+      r.state.x === stand.x && r.state.y === stand.y)
+    // v0.13 开门停原地：1F 的 Y 门紧邻 U，stand 恰好落在 U 格上，
+    // 「到 U 可达」已失真（玩家本就在 U），改验「再走一步才进门格」+ 门格此时可寻路。
+    const rEnter = resolveStep(r.state, stand.dir)
+    ok('v0.13 开门后再走一步才进入门格', rEnter.state.x === gate0.x && rEnter.state.y === gate0.y)
+    ok('开门后门格在点击寻路里可达',
+      findPath(r.state, new Set([gate0.x + ',' + gate0.y]), { blockEntities: true }).path !== null)
     const r2 = resolveStep(mk(0), stand.dir)
     ok('无钥匙撞门：提示缺少钥匙且门不动',
       r2.events.some(e => e.t === 'msg' && e.text === '缺少钥匙') && tileAt(r2.state, gate0.x, gate0.y) === gate0.c)
@@ -629,12 +667,16 @@ console.log('\n=== 9. v0.10 门机制 / 设置持久化 ===')
   const sol10 = findSolution()
   ok('findSolution 仍可通关（门改动未破坏可解性）', !!sol10 && sol10.state.ended === 'win')
   if (sol10) {
-    let st = newGame(), opened = 0
+    let st = newGame(), opened = 0, sealOpened = 0
     for (const d of sol10.steps) {
       const r = resolveStep(st, d); st = r.state
       opened += r.events.filter(e => e.t === 'msg' && e.text === '门已打开').length
+      sealOpened += r.events.filter(e => e.t === 'msg' && /封印门，开了/.test(e.text || '')).length
     }
-    ok('21 层门在攻略回放里都被实际打开', opened >= 21, opened + ' 次')
+    // v0.13：21 层里 20 道钥匙门 + 1 道 16F 封印门 Z（盗贼远程撬开，不发「门已打开」）
+    ok('20 道钥匙门在攻略回放里都被实际打开', opened >= 20, opened + ' 次')
+    ok('16F 封印门由盗贼任务线撬开', sealOpened === 1, sealOpened + ' 次')
+    ok('终局盗贼已离塔（thiefStage=3）', thiefStage(st.hero) === 3)
   }
 
   const appSrc10 = read('app.js'), textsSrc = read('texts.js')
@@ -697,14 +739,16 @@ console.log('\n=== 10. v0.11 交互停原地（经典魔塔「撞一下」）===
     const r2 = resolveStep(r.state, ig.dir)
     ok('v0.11 再走一步才进入原道具格', r2.state.x === ig.x && r2.state.y === ig.y)
   }
-  // 10.3 门：仍「开门即进入」（通道语义不变，v0.10 设计不回退）
+  // 10.3 门：v0.13 起改为「撞门开门、停在原地」，与怪物 / 道具交互语义统一
   const dg = scene(ch => !!DOOR_KEY[ch])
   ok('1F 找到门场景', !!dg)
   if (dg) {
     const s = strong(dg.sx, dg.sy); s.hero.keys[DOOR_KEY[dg.ch]] = DOOR_COST[dg.ch] || 1
     const r = resolveStep(s, dg.dir)
-    ok('v0.11 门仍开门即进入', r.state.x === dg.x && r.state.y === dg.y)
-    ok('v0.11 开门仍扣 1 把对应钥匙 + 变地板', r.state.hero.keys[DOOR_KEY[dg.ch]] === 0 && tileAt(r.state, dg.x, dg.y) === '.')
+    ok('v0.13 撞门开门后英雄停在原地（不占门格）', r.state.x === dg.sx && r.state.y === dg.sy)
+    ok('v0.13 开门仍扣 1 把对应钥匙 + 门格变地板', r.state.hero.keys[DOOR_KEY[dg.ch]] === 0 && tileAt(r.state, dg.x, dg.y) === '.')
+    const rEnterDoor = resolveStep(r.state, dg.dir)
+    ok('v0.13 再走一步才进入原门格', rEnterDoor.state.x === dg.x && rEnterDoor.state.y === dg.y)
   }
   // 10.4 楼梯 / 王座 / 商店 / 暗格：各自语义不变
   {
@@ -744,7 +788,7 @@ console.log('\n=== 10. v0.11 交互停原地（经典魔塔「撞一下」）===
       const w = r.events.find(e => e.t === 'msg' && /^胜 /.test(e.text || ''))
       if (w) { const m = w.text.match(/-(\d+)HP/); if (m && Number(m[1]) > 0) loss.add(before.floor) }
     }
-    ok('v0.11 21 层门仍全被打开', opened >= 21, opened + ' 次')
+    ok('v0.11 → v0.13：20 道钥匙门仍全被打开（16F 为封印门 Z）', opened >= 20, opened + ' 次')
     ok('v0.11 21/21 层仍掉血（难度曲线不退化）', loss.size === 21, loss.size + '/21')
   }
 }
@@ -764,8 +808,11 @@ console.log('\n=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===')
   ok('SECRET 坐标唯一', new Set(SECRET.map(s => s.floor + ':' + s.x + ':' + s.y)).size === SECRET.length)
   ok('SECRET 的 item 都能在 ITEMS 找到', SECRET.every(s => !!itemById(s.item)))
   ok('secretAt 可按坐标查到', SECRET.every(s => secretAt(s.floor, s.x, s.y) === s))
+  // v0.13：SECRET_REWARD 移除炸弹轮换，story key 由 7 段收敛为 6 段（secret_bomb 仅留文案不再引用）
   ok('SECRET 的 story key 都有文案', SECRET.every(s => tSrc12.includes(s.story + ':')) &&
-    new Set(SECRET.map(s => s.story)).size === 7, new Set(SECRET.map(s => s.story)).size + ' 段')
+    new Set(SECRET.map(s => s.story)).size === 6, new Set(SECRET.map(s => s.story)).size + ' 段')
+  ok('暗门奖励不再产出炸弹（地图拾取已全移除）',
+    !SECRET.some(s => /bomb/.test(s.story) || /bomb/.test(s.item)))
   ok('每层恰好 1 处暗门 A', FLOORS.every((f, i) => A_in(i).length === 1))
   // 11.2 暗门绝不绕开 v0.10 的唯一入口
   ok('暗门不落在房间墙 / 门 / 楼梯 / 王座邻域 2 格内', FLOORS.every((f, i) => {
@@ -855,22 +902,26 @@ console.log('\n=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===')
   const sol12 = findSolution()
   ok('v0.12 findSolution 仍可通关', !!sol12 && sol12.state.ended === 'win')
   if (sol12) {
-    let st = newGame(), loss = new Set(), opened = 0, ironOpened = 0, secretOpened = 0
+    let st = newGame(), loss = new Set(), opened = 0, ironOpened = 0, secretOpened = 0, sealOpened = 0
     for (const d of sol12.steps) {
       const before = st, r = resolveStep(st, d); st = r.state
       const msgs = r.events.filter(e => e.t === 'msg').map(e => e.text).join(' ')
       opened += r.events.filter(e => e.t === 'msg' && e.text === '门已打开').length
       if (msgs.includes('铁门开启')) ironOpened++
       if (msgs.includes('撞开暗门')) secretOpened++
+      if (msgs.includes('封印门，开了')) sealOpened++
       const w = r.events.find(e => e.t === 'msg' && /^胜 /.test(e.text || ''))
       if (w) { const m = w.text.match(/-(\d+)HP/); if (m && Number(m[1]) > 0) loss.add(before.floor) }
     }
-    ok('攻略回放 21 道门全开', opened >= 21, opened + ' 次')
+    // v0.13：16F 封印门 Z 由盗贼远程撬开，不发「门已打开」，故钥匙门是 20 道
+    ok('攻略回放 20 道钥匙门全开', opened >= 20, opened + ' 次')
+    ok('攻略回放 16F 封印门由盗贼撬开', sealOpened === 1, sealOpened + ' 次')
+    ok('攻略回放终局盗贼离塔且炸弹已解锁', thiefStage(st.hero) === 3 && !!(st.hero.flags & FLAG.BOMB_UNLOCK))
     ok('攻略回放 3 道铁门全开', ironOpened === 3, ironOpened + ' 道')
     ok('攻略回放暗门被实际撞开', secretOpened >= 15, secretOpened + ' 处')
     ok('21/21 层仍掉血（v0.9 难度曲线未退化）', loss.size === 21, loss.size + '/21')
-    ok('存档仍为 v3 且体积可控',
-      serialize(sol12.state).startsWith('3|') && serialize(sol12.state).length < CONFIG.SAVE_LIMIT,
+    ok('存档为 v4 且体积可控',
+      serialize(sol12.state).startsWith('4|') && serialize(sol12.state).length < CONFIG.SAVE_LIMIT,
       serialize(sol12.state).length + ' B')
   }
 }

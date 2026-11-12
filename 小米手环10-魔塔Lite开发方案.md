@@ -2148,9 +2148,9 @@ B 段两条（「领取后英雄停在该道具格」）、NPC 段两条（「�
 
 ---
 
-## 附 N：大字号适配手环屏 + 暗门/铁门/钥匙经济（v0.12.0，2026-11-12）
+## 附 N：大字号适配手环屏 + 暗门/铁门/钥匙经济（v0.12.0，2026-11-12，历史快照，已由附 O 取代）
 
-> **当前阶段以本附录为准**，取代附 M 的「当前阶段」表述。
+> 本附录保留作历史快照，**当前阶段以附 O（v0.13.0）为准**；下文「取代附 M」为当时的表述。
 > 触发（用户原话）：「期望按钮文本尽量大一点，用来适配手环的屏幕，其它文本也尽量大一点；
 > 原版的暗门/铁门/钥匙经济也考虑加入吧」。
 > 范围：在线试玩版 `/workspace/mota-lite-web/`。真机 M2 继续暂缓（清单见附 I）。
@@ -2255,4 +2255,95 @@ B 段两条（「领取后英雄停在该道具格」）、NPC 段两条（「�
 - 铁门统一消耗 **黄**钥匙（不按层变色），黄钥匙从 8F 起主要就是为 3 道铁门服务；「卖钥匙换金币」（原版 28F）暂未做，属后续可选项。
 - 暗门为纯支线：solver 顺路撞开 20/21 处，少撞几处不影响可解性；「需要前置道具才撞得开」的 21 层式暗门未引入（会强制依赖剧情顺序，和当前策略式攻略不兼容）。
 - 字号已按手环屏放大，但**真机可读性仍需 M2 解冻后实测**；本轮只在 212×520 的模拟器与真实 Chromium 里核验。
+- 真机 M2 全部继续暂缓；多存档槽位、Excel 导表维持「明确不做」。
+
+---
+
+## 附 O：底部布局修复 + 经验 / 盗贼任务线 / 炸弹中后期化（v0.13.0，2026-11-12）
+
+> **当前阶段以本附录为准**，取代附 N 的「当前阶段」表述；附 N 及更早附录保留作历史快照。
+> 触发：用户一轮 10 条反馈（底部小字被胶囊圆角裁掉、商人「继续」与「离开」重复、购买按钮开局就有、音量偏大、开门应停原地、商店购买后不关、打怪得经验金币、法师 / 盗贼常驻与剧情任务线、炸弹应中后期才解锁），外加四项 `AskUserQuestion` 确认的设计决策。
+> 范围：在线试玩版 `/workspace/mota-lite-web/`。真机 M2 继续暂缓（清单见附 I）。
+
+### O.1 四项确认的设计决策（AskUserQuestion）
+
+| 决策点 | 采用方案 |
+| --- | --- |
+| 「购买」按钮解锁后的行为 | 首次走到商店格旁交互后出现，之后**随时随地可打开商店** |
+| 地图现有炸弹拾取 | **全部移除**，改为商店购买（与「炸弹中后期才解锁」一致） |
+| 法师经验兑换比例 | **30 EXP = +3攻 / +3防 / +100HP**（全塔约 905 EXP ≈ 30 次兑换） |
+| 盗贼任务线 | **15F 救出 → 13F 取锁匠工具 → 开 16F 特殊门 → 19F 找钱袋 → 盗贼离塔** |
+
+### O.2 底部布局：先删被裁节点，再让行数自适应
+
+v0.12 把按钮放大到 14px 后，底部 `action-hint` 仍是 12px 小字且贴在胶囊圆角上，实拍被切。本轮不在原节点上微调字号，而是**整体删除**该节点（DOM 与 CSS 一并去掉），再把按钮区上移、收窄：
+
+| 元素 | v0.12 | v0.13 |
+| --- | --- | --- |
+| 底部提示小字 | `action-hint` 12px，被圆角裁切 | **删除节点**（提示并入 `.tip`） |
+| `.tip` | 40px 高 | `30px`，`top:362px`，行距 1.2 |
+| HUD 行距 | 1.25 | `1.15`，第 3 行新增经验 `E` |
+| `.action-bar` | 3 列 × 3 行固定行（56px / 29px，`top:402`） | **3 列自适应行**（51px / `grid-auto-rows:27px`，`left:26 / top:394 / width:160`） |
+| 行数 | 固定 3 行 | 随解锁按钮数变化：初始 5 按钮 **2 行**（底 451）、全解锁 7 按钮 **3 行**（底 481），均在圆角可用宽度内 |
+
+`v0.13-clean.png` 干净截图（冷启动关闭序章后）实测：`actionBar.bottom=649`、设备内坐标 `459 < 520`，5 个可见按钮全部清晰完整，无裁切；`炸弹` / `购买` 宽高为 0（`.act-locked` 隐藏）。
+
+### O.3 常驻交易弹层与按钮解锁
+
+- `queueStory(key, actions, once, opts)` 新增 `opts.persistent` / `opts.status`：`persistent` 弹层隐藏 `storyContinue`、购买后只调用 `updateStoryStatus()` 刷新余额行而不关闭，只有 `.story-leave` 才 `dismissStory()`。
+- 商店 `openShop()`、法师 `openMage()` 都用它；`story-card` 新增 `#storyStatus` 余额行（金币 / 经验）。
+- `renderHud()` 读 `hero.flags`：`FLAG.SHOP_SEEN` 控制「购买」、`FLAG.BOMB_UNLOCK` 控制「炸弹」，用 `.act-locked { display:none }` 同步隐藏屏幕内与工作台两套按钮。
+- 商店地图交互不再由宿主层特判弹框，统一走 `manualStep()` → `resolveStep()` 的 `N` 分支写 `SHOP_SEEN` 再 `openShop()`，保证点击 / 键盘同源。
+- 音量 `g.gain.value` `0.45 → 0.2`。
+
+### O.4 经验 / 法师 / 盗贼任务线 / 封印门
+
+- **经验**：怪物表加 `exp`，`monsterExp(mon, floor) = mon.exp × (shopTier(floor)+1)`，楼层档 1~7F×1 / 8~14F×2 / 15~21F×3，全塔实测约 **905 EXP**；击杀文案 `+nG +nEXP`，HUD 第 3 行 `E` 与工作台 `iExp` 同步。
+- **法师 `M`**：8F 救出后置 `FLAG.MAGE_FREED` 并**常驻不清格**，之后撞上去弹经验兑换界面，`mageBuy()` 用 `CONFIG.EXP_COST = 30` 换 `+3攻 / +3防 / +100HP`。
+- **盗贼 `T`**：常驻 NPC，`thiefStage(hero)` 存 `flags` bit5-6（0 被困 / 1 等锁匠工具 / 2 等钱袋 / 3 已离塔）。阶段 1 交 `j`（13F 锁匠工具）时 `specialDoorPos()` 找到 16F 的 `Z` 并 `setTileAt()` 远程清成地板，事件文案「盗贼掂了掂工具：16F 的封印门，开了」；阶段 2 交 `q`（19F 钱袋）后给谢礼（HP+300 / 攻+5 / 防+5）、清 `T` 格离塔。
+- **封印门 `Z`**：16F 上楼唯一入口，`DOOR_KEY` 不含 `Z`，三色钥匙都打不开；`findPath()` 的点击与攻略两种模式都不可穿越，是「不做盗贼任务就走不到后续楼层」的硬门槛。
+- **老者 `E` 与炸弹**：12F 房间救出置 `BOMB_UNLOCK` 并赠 1 枚；商店第 5 项 `bomb` 固定 `30G`（`CONFIG.BOMB_COST`），未解锁时 `shopActions()` 过滤掉；地图上的炸弹拾取格 `o` 全部移除，`SECRET_REWARD` 炸弹轮换改金币。
+- **开门停原地**：门分支由「开门即通过」改为 `return` 停原地，门格清成地板后再走一步才进入，与 v0.11 怪物 / 道具语义统一。
+
+### O.5 存档 v4（开发阶段旧档作废）
+
+`serialize()` 的 head 追加 `exp` / `flags` 两个字段，共 **16 段**：`4|floor,x,y,hp,atk,def,gold,ky,kb,kr,e,fly,bomb,book,exp,flags|变更集|已探索`。`deserialize()` 只认 `'4'`（`seg[0] !== '4'` 或 `a.length !== 16` 直接 `null`），v1~v3 旧档按用户 2026-11-11 的开发阶段授权**作废重开**、不写兼容层 —— 否则会出现「已救出 NPC 却 `flags=0`、16F 封印门永远开不了」的死档。`flags` 上限 127（7 位，含 `thiefStage` 两位）。
+
+### O.6 生成链 / 求解器 / 校验
+
+| 文件 | 改动 |
+| --- | --- |
+| `tools/make_levels.py` | 怪物表加 `exp`；`ROOM_FLOORS` 纳入 12F、`ROOM_KIND[12]='elder'`；`SPECIAL_DOOR_FLOOR=16` 上楼门改 `Z`；任务道具 `j`(13F) / `q`(19F)；地图炸弹拾取移除、`SECRET_REWARD` 炸弹改金币；`items` 加 `npc_elder` / `quest_lockpick` / `quest_moneybag`（`effect.flag` = 2 / 4 / 8）；`hero0` 加 `exp/flags`；`meta.schema=5` |
+| `levels/levels.json` / `tables.js` | 重新生成，`TILE_CHAR/TILE_COLOR` 补 `Z/E/j/q` |
+| `tools/build_tables.py` | HEADER 补 `Z/E/j/q` 说明 |
+| `tools/gen_assets.py` | 新增 `npc_elder` / `lockpick` / `moneybag` / `door_seal` 四帧（**43 帧**），`TILE_MAP` 补 `E/j/q/Z`，`manifest.version=0.13.0` |
+| `logic.js` | `FLAG` / `thiefStage` / `monsterExp` / `mageBuy` / `MAGE_GOODS` / `BOMB_COST` / `EXP_COST` / `applyEffect(eff.flag)` / 门停原地 / 封印门 Z / 常驻 M·T / 商店第 5 项 / 存档 v4 |
+| `solver.js` | `M/T` 视为不可穿越固定 NPC、`Z` 不可穿越、`scan()` 跳过已救出法师、盗贼只在能推进任务时列目标、跨层交付优先（逐层下楼回 15F） |
+| `app.js` / `index.html` / `style.css` | 音量、HUD 经验、按钮显隐、常驻弹层、剧情触发（`interacted` 纳入 `msg`）、删除 `action-hint`、按钮区重排 |
+| `texts.js` | 楼层线索（12/13/15/16/19F）、11 段新剧情、`shopGoods.bomb` / `mageGoods` / `mageLeave`、v4 存档说明 |
+| `version.js` | `v0.12.0 → v0.13.0` + CHANGELOG 首条 |
+| 四套校验 + `browser_check.mjs` | v4 存档串全量升级、旧档作废、门结构 `Z`、开门停原地、常驻弹层、字号 / 按钮区；新增 30 项 v0.13 端到端专项 |
+
+### O.7 验证结果
+
+| 校验 | 项数 | 结果 |
+| --- | --- | --- |
+| `validate_version` | **83** | 全绿（v4 / v0.13 布局 / CHANGELOG / 逻辑与宿主层防漂移） |
+| `validate_levels` | **83** | 全绿（新增 1e：schema=5 / Z·E·j·q 唯一 / 无地图炸弹 / exp / effect.flag） |
+| `validate_logic` | **423** | 全绿（开门停原地、20 钥匙门 + 1 封印门回放、SECRET 6 段、存档 v4） |
+| `validate_assets` | **92** | 全绿（新增第 7 段：E/j/q/Z 精灵、4 帧、无地图 `o`、11 段新剧情、商店 5 项） |
+| `build_tables.py --check` | — | 通过（表未落后于源） |
+| 真实 Chromium `browser_check` | **312** | 全绿、**零 JS 异常**（新增 30 项：打怪 EXP/GOLD 与 HUD 刷新、法师兑换、老者炸弹、封印门、盗贼跨层交付 / 离塔、音量） |
+| **合计** | **993** | 全绿 |
+
+正式工程回放：**1725 步 / 304 轮**通关，终局 `HP1532 / ATK199 / DEF251 / GOLD1067 / EXP905`、`thiefStage=3`、`BOMB_UNLOCK=true`、残余封印门 `Z=0`；**51 场战斗仅 2 场零伤、21/21 层全部掉血**（逐层曲线未退化），存档 v4 **1117B**。
+
+> 探针实测订正一处易误判：战斗胜利时 `step()` 把 `render()` 推迟到 460ms 战斗动画之后，而 `save()` 立即写盘，因此打怪后立刻读 HUD 会短暂看到 `E0`（state 已是 `exp=4`）。用 `waitFor()` 等动画结束即 `E4`，属正常节奏而非 bug；`browser_check` 专项据此用 `waitFor` 而非固定 `sleep`。
+
+### O.8 边界与后续
+
+- 存档 v4 不兼容 v1~v3，旧档导入按 `deserialize()` 返回 `null` 处理并提示，不污染当前进度。
+- `TEXTS.story.secret_bomb` 作为孤儿文案保留（避免旧断言漂移），`SECRET` 表已不再引用它；后续可清理。
+- 盗贼任务线 stage2（交钱袋）是可选支线，solver 顺路完成以验证全链；只有 stage1 开 16F 封印门是通关硬门槛。
+- **协作约定**：用户明确「只有说『备份』才提交到 GitHub」，本轮所有改动均为本地，未 commit / push。
 - 真机 M2 全部继续暂缓；多存档槽位、Excel 导表维持「明确不做」。

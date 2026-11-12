@@ -98,8 +98,12 @@ ok('app.js 用 VIEWPORT 配置做相机', app.includes("import") && app.includes
 ok('style.css 有视口裁剪与相机样式', css.includes('.viewport') && css.includes('overflow: hidden'))
 ok('缩放档含 0.5×（手环观感）', /data-zoom="0\.5"/.test(html) && html.includes('data-zoom="1.5"'))
 ok('browser_check.mjs 有图鉴与相机专项断言', browserCheck.includes('#codexLayer') && browserCheck.includes('is-hero'))
-ok('logic.js 存档版本升到 v3', read('logic.js').includes("return '3|'"))
-ok('browser_check.mjs 断言 v3 存档格式', browserCheck.includes("startsWith('3|')"))
+ok('logic.js 存档版本升到 v4', read('logic.js').includes("return '4|'"))
+ok('logic.js deserialize 只认 v4 且 head 恰好 16 段',
+  read('logic.js').includes("seg[0] !== '4' || seg.length !== 4") &&
+  read('logic.js').includes('a.length !== 16'))
+ok('browser_check.mjs 断言 v4 存档格式',
+  browserCheck.includes("startsWith('4|')") && browserCheck.includes('v0.13 存档串为 v4 格式'))
 
 // ---- v0.9 图鉴「所有类型」口径 / 房间 NPC 端到端回归：防止漏接或漂移 ----
 ok('renderCodex 静态扫本层配置过的类型全集（不只看存活）',
@@ -154,9 +158,15 @@ const fontBad = fontFloor.filter(([s, min]) => ruleFontSize(s) < min)
 ok('style.css 屏幕内主要文本字号全部达标（按钮 >=14px）', fontBad.length === 0,
   fontBad.length ? fontBad.map(([s, m]) => s + ':' + ruleFontSize(s) + '<' + m).join(' ') : fontFloor.length + ' 处达标')
 ok('style.css 不再出现 9/10/11px 的手环小字', !/font-size:\s*(9|10|11)px/.test(css))
-ok('style.css action-bar 改 3 列×3 行（56px 宽容纳 14px 字）',
-  /\.action-bar\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*56px\)/.test(css) &&
-  /\.action-bar\s*\{[^}]*grid-template-rows:\s*repeat\(3,\s*29px\)/.test(css))
+ok('style.css v0.13 action-bar 改 3 列自适应行（51px 宽 / 27px 行 / top394 / width160）',
+  /\.action-bar\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*51px\)/.test(css) &&
+  /\.action-bar\s*\{[^}]*grid-auto-rows:\s*27px/.test(css) &&
+  /\.action-bar\s*\{[^}]*top:\s*394px/.test(css) &&
+  /\.action-bar\s*\{[^}]*width:\s*160px/.test(css))
+ok('style.css 删除被裁的 action-hint 小字节点（不再有该规则）', !/\.action-hint\s*\{/.test(css))
+ok('style.css 有 act-locked / 常驻弹层余额 / 离开 / 隐藏继续样式',
+  css.includes('.act-locked') && css.includes('.story-status') &&
+  css.includes('.story-leave') && css.includes('.story-continue[hidden]'))
 ok('index.html HUD 拆成 3 行（楼层名单独一行）', html.includes('hud-row-title'))
 ok('app.js 打字机跟随滚动（放大后长剧情不被裁）', app.includes('body.scrollTop = body.scrollHeight'))
 
@@ -187,9 +197,9 @@ ok('texts.js 有暗门/铁门/钥匙经济文案与 7 段暗门剧情',
 ok('app.js 接 secretAt 剧情 / 暗门音效 / 相邻提示',
   app.includes("beforeTile === 'A' ? secretAt") && app.includes("t.includes('撞开暗门')") &&
   app.includes('function secretNearby'))
-ok('browser_check.mjs 有 v0.12 字号 / 暗门 / 铁门 / 商店钥匙专项',
-  browserCheck.includes('v0.12 屏幕内 19 处文本') && browserCheck.includes('v0.12 撞暗门：停在原地') &&
-  browserCheck.includes('v0.12 3 把黄钥匙撞铁门') && browserCheck.includes('v0.12 买黄钥匙'))
+ok('browser_check.mjs 有 v0.13 字号 / 暗门 / 铁门 / 商店钥匙专项',
+  browserCheck.includes('v0.13 屏幕内 18 处文本') && browserCheck.includes('v0.12 撞暗门：停在原地') &&
+  browserCheck.includes('v0.12 3 把黄钥匙撞铁门') && browserCheck.includes('v0.13 买黄钥匙'))
 ok('validate_logic.mjs 有第 11 段 / validate_levels.mjs 有 1d 段',
   read('tools/validate_logic.mjs').includes('=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===') &&
   read('tools/validate_levels.mjs').includes('=== 1d. v0.12 暗门 / 铁门 / 钥匙经济 ==='))
@@ -197,8 +207,38 @@ ok('validate_assets.mjs 校验 atlas 的 A/G 映射与暗门剧情',
   read('tools/validate_assets.mjs').includes("atlas.tileMap.A === 'wall'") &&
   read('tools/validate_assets.mjs').includes("atlas.tileMap.G === 'door_iron'") &&
   read('tools/validate_assets.mjs').includes('secretStoryKeys'))
-ok('CHANGELOG 首条说明大字号 + 暗门 / 铁门 / 钥匙经济',
-  CHANGELOG[0].note.includes('大字号') && CHANGELOG[0].note.includes('暗门') &&
-  CHANGELOG[0].note.includes('铁门') && CHANGELOG[0].note.includes('钥匙经济'))
+ok('CHANGELOG 首条说明 v0.13 经验 / 盗贼任务线 / 封印门 / 炸弹 / 存档 v4 / 音量',
+  CHANGELOG[0].note.includes('经验系统') && CHANGELOG[0].note.includes('盗贼任务线') &&
+  CHANGELOG[0].note.includes('封印门') && CHANGELOG[0].note.includes('存档升 v4') &&
+  CHANGELOG[0].note.includes('音量'))
+
+// ---- v0.13 经验 / 盗贼任务线 / 炸弹中后期化 / 存档 v4：静态防漂移 ----
+ok('logic.js 定义 FLAG / thiefStage / monsterExp / mageBuy',
+  ['export const FLAG', 'export function thiefStage', 'export function monsterExp', 'export function mageBuy']
+    .every(s => logicSrc.includes(s)))
+ok('logic.js 有封印门 Z 分支 / BOMB_UNLOCK 商店炸弹门槛 / BOMB_COST·EXP_COST',
+  logicSrc.includes("if (t === 'Z')") &&
+  logicSrc.includes("offer.kind === 'bomb' && !(s.hero.flags & FLAG.BOMB_UNLOCK)") &&
+  logicSrc.includes('BOMB_COST: 30') && logicSrc.includes('EXP_COST: 30'))
+ok('app.js 音量 0.45→0.2', app.includes('g.gain.value = 0.2'))
+ok('app.js renderHud 读 flags 解锁按钮 + 经验 HUD / 工作台',
+  app.includes("'E' + (h.exp || 0)") && app.includes('act-locked') &&
+  app.includes('FLAG.SHOP_SEEN') && app.includes('FLAG.BOMB_UNLOCK'))
+ok('app.js 常驻交易弹层 persistent / status / 隐藏「继续」/ 购买后只刷新余额',
+  ['opts.persistent', 'opts.status', 'updateStoryStatus',
+   "$('storyContinue').hidden = !!item.persistent"].every(s => app.includes(s)))
+ok('app.js 剧情触发覆盖 E / j / q / Z / N / M / T',
+  ["beforeTile === 'E'", "beforeTile === 'j'", "beforeTile === 'q'", "beforeTile === 'Z'",
+   "beforeTile === 'N'", "beforeTile === 'M'", "beforeTile === 'T'"].every(s => app.includes(s)))
+ok('index.html 有 hudExp / iExp / storyStatus 注入点，且已删除 actionHint',
+  ['id="hudExp"', 'id="iExp"', 'id="storyStatus"'].every(s => html.includes(s)) &&
+  !html.includes('id="actionHint"'))
+ok('browser_check.mjs 有 v0.13 经验 / 法师 / 老者 / 封印门 / 盗贼端到端专项',
+  ['v0.13 打怪经验按 monsterExp 入账', 'v0.13 法师兑换扣 30 EXP',
+   'v0.13 老者置 BOMB_UNLOCK', 'v0.13 封印门 Z 不被打开',
+   'v0.13 交工具后盗贼阶段 1→2'].every(s => browserCheck.includes(s)))
+ok('validate_assets.mjs 有 v0.13 精灵 / 剧情 / 商店炸弹专项',
+  ['atlas 新增 E / j / q / Z 四个精灵映射', 'v0.13 新剧情 key 齐全',
+   'SECRET 奖励不再产出炸弹'].every(s => read('tools/validate_assets.mjs').includes(s)))
 
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

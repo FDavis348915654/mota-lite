@@ -10,7 +10,8 @@
 //   - 飞行器 / 炸弹 / 商店交易的入口，与 step() 共用逻辑层纯函数。
 import {
   CONFIG, newGame, resolveStep, buildCells, tileAt, calcBattle, scaledMon, battleHint,
-  serialize, deserialize, useFly, useBomb, shopBuy, shopOffer, SHOP_GOODS, isEntityTile
+  serialize, deserialize, useFly, useBomb, shopBuy, shopOffer, SHOP_GOODS, isEntityTile,
+  mageBuy, MAGE_GOODS, FLAG, thiefStage
 } from './logic.js'
 import {
   FLOORS, TILE_COLOR, TILE_CHAR, MONSTERS, ITEMS, DOOR_KEY, VIEWPORT,
@@ -21,7 +22,7 @@ import { VERSION, BUILD_DATE, CHANGELOG } from './version.js'
 import { TEXTS } from './texts.js'
 import { RECORD_KEY, emptyRecords, normalizeRecords, applyStep, formatRecords } from './records.js'
 
-const SAVE_KEY = 'mota_lite_web_v1'   // 保持原 key：旧版 v1 存档串会被 deserialize() 兼容读入
+const SAVE_KEY = 'mota_lite_web_v1'   // key 不变；v0.13 起 deserialize() 只认 v4，v1~v3 旧档作废重开
 const $ = id => document.getElementById(id)
 
 const screenEl = $('screen'), gridEl = $('grid'), fxLayer = $('fxLayer'), deviceEl = $('device')
@@ -116,7 +117,7 @@ function playSfx(key) {
     const b = audioBuffers[TEXTS.sfx[key]]
     if (!b) return
     const src = audioCtx.createBufferSource(); src.buffer = b
-    const g = audioCtx.createGain(); g.gain.value = 0.45
+    const g = audioCtx.createGain(); g.gain.value = 0.2   // v0.13：用户反馈音量偏大，0.45 -> 0.2
     src.connect(g); g.connect(audioCtx.destination); src.start()
   } catch (e) { /* 忽略音频设备异常 */ }
 }
@@ -207,8 +208,12 @@ function legendGroup(title, items) {
 function buildLegend() {
   const terrain = ['#', '.', '@', 'U', 'D', 'W', 'N', 'H']
   const terrainName = { '#': '墙', '.': '地板', '@': '出生点', 'U': '上楼', 'D': '下楼', 'W': '王座/通关', 'N': '商店', 'H': '隐藏暗格' }
-  const kd = ['Y', 'B', 'R', 'y', 'b', 'r']
-  const kdName = { 'Y': '黄门', 'B': '蓝门', 'R': '红门', 'y': '黄钥匙', 'b': '蓝钥匙', 'r': '红钥匙' }
+  // v0.13：铁门 G / 暗门 A / 封印门 Z 都进图例；老者 E / 锁匠工具 j / 钱袋 q
+  // 已在 ITEMS 表里，走下面「道具 / 能力」组自动列出。
+  const kd = ['Y', 'B', 'R', 'G', 'A', 'Z', 'y', 'b', 'r']
+  const kdName = { 'Y': '黄门', 'B': '蓝门', 'R': '红门', 'G': '铁门(3 黄钥匙)',
+    'A': '暗门(撞墙显形)', 'Z': '封印门(盗贼撬开)',
+    'y': '黄钥匙', 'b': '蓝钥匙', 'r': '红钥匙' }
   legendEl.innerHTML = ''
   legendEl.appendChild(legendGroup('地形 / 出口', terrain.map(ch =>
     legendItem(TILE_COLOR[ch] || TILE_COLOR['.'], TILE_CHAR[ch] || ch, terrainName[ch]))))
@@ -325,6 +330,18 @@ function renderHud() {
   $('iFly').textContent = h.fly ? '已持有 ✈' : '0'
   $('iBomb').textContent = String(h.bomb)
   $('iGold').textContent = String(h.gold)
+  // v0.13：经验 HUD + 工作台读数（打怪获得，法师处按 30 EXP 兑换）
+  $('hudExp').textContent = 'E' + (h.exp || 0)
+  $('iExp').textContent = String(h.exp || 0)
+  // v0.13：能力按钮按 flags 解锁 —— 「购买」首次走到商店旁才出现，
+  // 「炸弹」救出 12F 老者（解锁炸弹能力）才出现。屏幕内与工作台两套按钮同源。
+  const flags = h.flags || 0
+  const shopSeen = !!(flags & FLAG.SHOP_SEEN)
+  const bombUnlocked = !!(flags & FLAG.BOMB_UNLOCK)
+  const shopBtns = ['btnActShop', 'btnShop']
+  const bombBtns = ['btnActBomb', 'btnBomb']
+  shopBtns.forEach(id => $(id).classList.toggle('act-locked', !shopSeen))
+  bombBtns.forEach(id => $(id).classList.toggle('act-locked', !bombUnlocked))
   // 图鉴按钮：未持有时淡化，点击给出提示（不用 disabled，玩家需要知道为什么点不动）
   $('btnActCodex').classList.toggle('locked', !h.book)
 }
@@ -376,12 +393,21 @@ function showBattleFx(sx, sy, tx, ty, dmg) {
 function hideBattleFx() { fxLayer.innerHTML = '' }
 
 // ---- 文本框弹层：打字机 + 剧情队列 ----
-function queueStory(key, actions, once = true) {
+// v0.13：opts.persistent = 常驻交易弹层（商店 / 法师兑换）——隐藏「继续」、购买后不关闭，
+//   只有带 leave:true 的「离开」按钮才 dismissStory()；其余剧情段仍是点任意按钮即关。
+//   opts.status = 返回余额文案的函数，每次购买后原地刷新，让玩家看得见金币 / 经验变化。
+function queueStory(key, actions, once = true, opts = {}) {
   if (replayMode || !TEXTS.story[key]) return
   if (once && storySeen.has(key)) return
   if (once) storySeen.add(key)
-  storyQueue.push({ key, actions: actions || [] })
+  storyQueue.push({ key, actions: actions || [], persistent: !!opts.persistent, status: opts.status || null })
   flushStory()
+}
+function updateStoryStatus() {
+  const el = $('storyStatus'), it = currentStory
+  if (!it || !it.status) { el.hidden = true; el.textContent = ''; return }
+  el.hidden = false
+  el.textContent = it.status()
 }
 function showNextStory() {
   const item = storyQueue.shift()
@@ -391,10 +417,18 @@ function showNextStory() {
   storyOpen = true
   $('storyTitle').textContent = seg.title
   $('storyBody').textContent = ''
+  // 常驻交易弹层不显示「继续」，避免它与「离开」表现重复（用户反馈）
+  $('storyContinue').hidden = !!item.persistent
+  updateStoryStatus()
   const acts = $('storyActions'); acts.innerHTML = ''
   item.actions.forEach(a => {
     const b = document.createElement('button'); b.textContent = a.label
-    b.addEventListener('click', () => { a.run(); dismissStory() })
+    if (a.leave) b.className = 'story-leave'
+    b.addEventListener('click', () => {
+      a.run()
+      if (a.leave || !item.persistent) dismissStory()
+      else updateStoryStatus()   // 购买后原地刷新余额，弹层保持打开，可继续买
+    })
     acts.appendChild(b)
   })
   $('storyLayer').hidden = false
@@ -412,6 +446,8 @@ function showNextStory() {
 function dismissStory() {
   if (typeTimer) { clearInterval(typeTimer); typeTimer = null }
   $('storyLayer').hidden = true
+  $('storyContinue').hidden = false   // 下一段可能是普通剧情，恢复「继续」
+  $('storyStatus').hidden = true
   storyOpen = false; currentStory = null
   showNextStory()
 }
@@ -480,23 +516,49 @@ function pickSfx(events, beforeTile, battleWon) {
   return 'step'
 }
 
+// v0.13：商店 / 法师兑换共用一次「交易提交」——只刷 state / 提示 / 存档 / 事件流水 / 视图，
+// 不推进步数、不关闭弹层。弹层是否关闭由 showNextStory() 里的 action.leave 决定。
+function commitTransaction(r, sfx) {
+  state = r.state
+  const msgs = r.events.filter(e => e.t === 'msg').map(e => e.text)
+  if (msgs.length) tipEl.textContent = msgs[msgs.length - 1]
+  if (r.events.some(e => e.t === 'save')) save()
+  msgs.forEach(t => history.push({ step: steps, text: t }))
+  render(); renderHistory(); playSfx(sfx)
+}
 function shopActions() {
-  // v0.9 经典魔塔商店：攻 / 防 / 生命 三选一，标签带当前楼层档位的实际增量
-  const goods = SHOP_GOODS.map(g => {
-    const offer = shopOffer(g.kind, state.floor)
-    return {
-      label: TEXTS.ui.shopGoods[g.kind] + ' +' + offer.amount + '（' + offer.cost + 'G）',
-      run: () => {
-        const r = shopBuy(state, g.kind); state = r.state
-        const msgs = r.events.filter(e => e.t === 'msg').map(e => e.text)
-        if (msgs.length) tipEl.textContent = msgs[msgs.length - 1]
-        if (r.events.some(e => e.t === 'save')) save()
-        msgs.forEach(t => history.push({ step: steps, text: t }))
-        render(); renderHistory(); playSfx('powerup')
+  // v0.13：炸弹是中后期商品，只有救出老者（BOMB_UNLOCK）后商人肯卖；
+  // 其余四项沿用 v0.12 的攻 / 防 / 生命 / 黄钥匙，标签带当前楼层档位增量。
+  const goods = SHOP_GOODS
+    .filter(g => g.kind !== 'bomb' || (state.hero.flags & FLAG.BOMB_UNLOCK))
+    .map(g => {
+      const offer = shopOffer(g.kind, state.floor)
+      return {
+        label: TEXTS.ui.shopGoods[g.kind] + ' +' + offer.amount + '（' + offer.cost + 'G）',
+        run: () => commitTransaction(shopBuy(state, g.kind), 'powerup')
       }
-    }
+    })
+  return [...goods, { label: TEXTS.ui.shopLeave, leave: true, run: () => {} }]
+}
+function openShop() {
+  // once=false：每次撞商店 / 点「购买」都弹；persistent：购买后不关、隐藏「继续」
+  queueStory('shop', shopActions(), false, {
+    persistent: true,
+    status: () => '金币 ' + state.hero.gold + ' G'
   })
-  return [...goods, { label: TEXTS.ui.shopLeave, run: () => {} }]
+}
+function mageActions() {
+  const goods = MAGE_GOODS.map(g => ({
+    label: TEXTS.ui.mageGoods[g.kind] + ' +' + g.amount + '（' + CONFIG.EXP_COST + ' EXP）',
+    run: () => commitTransaction(mageBuy(state, g.kind), 'powerup')
+  }))
+  return [...goods, { label: TEXTS.ui.mageLeave, leave: true, run: () => {} }]
+}
+function openMage() {
+  queueStory('mage', mageActions(), false, {
+    persistent: true,
+    status: () => '经验 ' + (state.hero.exp || 0) + ' EXP · 每次兑换 ' + CONFIG.EXP_COST
+  })
 }
 
 // v0.12：暗门 A 视觉与墙完全一致，手环小屏靠「相邻提示」给一条可发现的线索。
@@ -517,6 +579,8 @@ function step(dir) {
   const hidden = beforeTile === 'H' ? hiddenAt(before.floor, tx, ty) : null
   const secret = beforeTile === 'A' ? secretAt(before.floor, tx, ty) : null
   const beforeFloor = before.floor
+  // v0.13：法师 M 首次救出弹介绍，之后（撞之前就已救出）弹经验兑换界面
+  const mageFreedBefore = !!(before.hero.flags & FLAG.MAGE_FREED)
   const beforeCells = buildCells(before)
 
   const r = resolveStep(before, dir)
@@ -538,7 +602,9 @@ function step(dir) {
   // 因此「战斗胜利」不能靠 moved 判定（否则音效 / 动画全丢），直接看胜利事件；
   // 剧情触发也改用 progressed（移动 或 结算了交互），避免原地交互时丢失剧情。
   const battleWon = !!beforeMon && events.some(t => t.startsWith('胜 '))
-  const interacted = r.events.some(e => e.t === 'save' || e.t === 'vibrate')
+  // v0.13：常驻 NPC 对话 / 封印门提示只有 msg 事件（无 save / vibrate），
+  // 若不算 interacted 会丢掉法师兑换 / 盗贼任务 / 封印门剧情；任何事件都算「发生了交互」。
+  const interacted = r.events.some(e => e.t === 'save' || e.t === 'vibrate' || e.t === 'msg')
   const progressed = moved || interacted
   playSfx(pickSfx(events, beforeTile, battleWon))
 
@@ -547,8 +613,24 @@ function step(dir) {
     // v0.12 撞开暗门：按奖励类型弹一段短剧情（storySeen 按 key 去重，同类只弹一次）
     if (secret && progressed) queueStory(secret.story)
     if (beforeTile === 'F' && progressed) queueStory('fly')
-    if (beforeTile === 'o' && progressed) queueStory('bomb')
-    if (beforeTile === 'N' && progressed) queueStory('shop', shopActions(), false)
+    // v0.13 剧情线：老者解锁炸弹 / 两件任务道具 / 16F 封印门 / 法师常驻兑换 / 盗贼阶段推进
+    if (beforeTile === 'E' && progressed) queueStory('elder')
+    if (beforeTile === 'j' && progressed) queueStory('lockpick')
+    if (beforeTile === 'q' && progressed) queueStory('moneybag')
+    if (beforeTile === 'Z' && progressed) queueStory('sealed_door')
+    if (beforeTile === 'N' && progressed) openShop()
+    if (beforeTile === 'M' && progressed) {
+      if (mageFreedBefore) openMage()
+      else queueStory('mage_free')
+    }
+    if (beforeTile === 'T' && progressed) {
+      const stB = thiefStage(before.hero), stA = thiefStage(state.hero)
+      if (stB === 0 && stA === 1) queueStory('thief_free')
+      else if (stB === 1 && stA === 2) queueStory('thief_door')
+      else if (stB === 2 && stA === 3) queueStory('thief_leave')
+      else if (stA === 1) queueStory('thief_task1')
+      else if (stA === 2) queueStory('thief_task2')
+    }
     if (state.floor !== beforeFloor) queueStory(FLOORS[state.floor].story)
     if (state.ended === 'win') queueStory('win')
     if (state.ended === 'dead') queueStory('lose')
@@ -781,14 +863,11 @@ function dirTo(tx, ty) {
   if (ty > state.y) return 'down'
   return 'up'
 }
-// 对相邻格执行一次交互：商店弹交易框；v0.11 起怪物 / 道具 / NPC 结算后停在原地，
-// 门 / 楼梯 / 王座 / 暗格仍走进去 —— 由 resolveStep 各自的语义决定，宿主层不再补走一步。
+// 对相邻格执行一次交互：v0.11 起怪物 / 道具 / NPC 结算后停在原地，
+// 门 / 楼梯 / 王座 / 暗格由 resolveStep 各自语义决定，宿主层不再补走一步。
+// v0.13：商店不再在这里特判弹框 —— 统一走 manualStep -> resolveStep 的 N 分支，
+// 由逻辑层写入 SHOP_SEEN，再由 step() 弹常驻交易界面，保证点击 / 键盘两种交互同源。
 function interact(tx, ty) {
-  if (tileAt(state, tx, ty) === 'N') {
-    queueStory('shop', shopActions(), false); flushStory()
-    log('商人：欢迎光临，看看货吧')
-    return
-  }
   manualStep(dirTo(tx, ty))
 }
 function walkTo(tx, ty) {
@@ -942,12 +1021,12 @@ $('storyLayer').addEventListener('click', e => { if (e.target === $('storyLayer'
 $('btnFlyUp').addEventListener('click', () => doAction(s => useFly(s, 1), 'powerup'))
 $('btnFlyDown').addEventListener('click', () => doAction(s => useFly(s, -1), 'powerup'))
 $('btnBomb').addEventListener('click', () => doAction(useBomb, 'bomb'))
-$('btnShop').addEventListener('click', () => { queueStory('shop', shopActions(), false); flushStory() })
+$('btnShop').addEventListener('click', () => openShop())
 // 屏幕内道具按钮（原方向键位置），与右侧工作台共用同一组 doAction 入口
 $('btnActFlyUp').addEventListener('click', () => doAction(s => useFly(s, 1), 'powerup'))
 $('btnActFlyDown').addEventListener('click', () => doAction(s => useFly(s, -1), 'powerup'))
 $('btnActBomb').addEventListener('click', () => doAction(useBomb, 'bomb'))
-$('btnActShop').addEventListener('click', () => { queueStory('shop', shopActions(), false); flushStory() })
+$('btnActShop').addEventListener('click', () => openShop())
 
 routeStrip.addEventListener('click', e => {
   const b = e.target.closest('.route-step'); if (!b || !replayMode) return
@@ -1186,8 +1265,8 @@ function injectTexts() {
   $('helpRule').textContent = TEXTS.help.rule
   $('helpOptional').textContent = TEXTS.help.optional
   $('archText').textContent = '本页 import 在线版自己的 logic.js / tables.js / solver.js（单一真源），浏览器里跑的就是那个 resolveStep()。关卡编辑源是 levels/levels.json，由 tools/build_tables.py 生成 tables.js，运行时不读 JSON。像素精灵、战斗动画、文本框剧情、8-bit 音效、全部文案都是本地生成的资源，由配置表与 texts.js 驱动。'
-  $('archSub').textContent = '手环端 M1 工程 /workspace/mota-lite/ 已冻结（真机暂缓）。v0.4 起逻辑层分叉，未来移植以在线版为准重新对齐；存档 v3 兼容 v2 / v1 旧档。' + FLOORS.length + ' 层整层 13×15 = ' + (W * H) + ' 格全部渲染，.viewport 只裁出 ' + VIEWPORT.cols + '×' + VIEWPORT.rows + ' 一屏，相机由 state.x/y 派生（不进存档）。手环端输入 @swipe → 键盘/点击格子/手势，@system.storage → localStorage。'
-  $('abilityHint').textContent = '道具按钮在屏幕下方：升层 / 降层 / 炸弹 / 购买 / 图鉴；键盘 F / Shift+F / B / C 亦可。飞行器只飞已探索过的楼层。'
+  $('archSub').textContent = '手环端 M1 工程 /workspace/mota-lite/ 已冻结（真机暂缓）。v0.4 起逻辑层分叉，未来移植以在线版为准重新对齐；存档已升 v4（head 16 段，追加经验 exp 与标志位 flags），v1~v3 旧档作废重开。' + FLOORS.length + ' 层整层 13×15 = ' + (W * H) + ' 格全部渲染，.viewport 只裁出 ' + VIEWPORT.cols + '×' + VIEWPORT.rows + ' 一屏，相机由 state.x/y 派生（不进存档）。手环端输入 @swipe → 键盘/点击格子/手势，@system.storage → localStorage。'
+  $('abilityHint').textContent = '屏幕下方按钮按进度解锁：首次走到商店旁边交互后出现「购买」（之后随处可开商店），救出 12F 老者后出现「炸弹」；键盘 F / Shift+F / B / C 亦可。金币在商店花，经验找 8F 救出的法师按 30 EXP 一次换属性。飞行器只飞已探索过的楼层。'
   $('storyContinue').textContent = TEXTS.ui.storyContinue
   $('btnFlyUp').textContent = TEXTS.ui.flyUp
   $('btnFlyDown').textContent = TEXTS.ui.flyDown
@@ -1201,7 +1280,6 @@ function injectTexts() {
   $('btnActSettings').textContent = TEXTS.ui.actSettings
   $('btnActCodex').textContent = TEXTS.ui.actCodex
   $('codexClose').textContent = TEXTS.ui.codexClose
-  $('actionHint').textContent = TEXTS.ui.actHint
   $('settingsTitle').textContent = TEXTS.ui.settingsTitle
   $('settingsClose').textContent = TEXTS.ui.settingsClose
   // 新游戏入口族 + 单槽说明，文案同样只从 texts.js 取

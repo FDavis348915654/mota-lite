@@ -122,11 +122,12 @@ ok('房间开口守门怪仍是常规怪种', (() => {
 
 // ---- 1c. v0.10 三色门封唯一入口 ----
 console.log('\n=== 1c. v0.10 门结构 ===')
-const DCH = ['Y', 'B', 'R', 'G'], KCH = ['y', 'b', 'r']
+// v0.13：16F 上楼唯一入口改为封印门 Z（三色钥匙无效，只有盗贼任务线能撬开），
+//        故门字符集合纳入 Z；7F / 14F / 21F 主路门仍是铁门 G，其余按三色分段。
+const DCH = ['Y', 'B', 'R', 'G', 'Z'], KCH = ['y', 'b', 'r']
 const doorsIn = f => f.rows.join('').split('').filter(c => DCH.includes(c))
-// v0.12：7F / 14F / 21F 主路门升级为铁门 G（需 3 把黄钥匙），其余按三色分段
-const wantDoor = n => (n === 7 || n === 14 || n === 21) ? 'G'
-  : (n <= 7 ? 'Y' : (n <= 14 ? 'B' : 'R'))
+const wantDoor = n => n === 16 ? 'Z'
+  : ((n === 7 || n === 14 || n === 21) ? 'G' : (n <= 7 ? 'Y' : (n <= 14 ? 'B' : 'R')))
 ok('每层恰好 1 道门', data.floors.every(f => doorsIn(f).length === 1),
   data.floors.map((f, i) => (i + 1) + 'F:' + doorsIn(f).length).filter(t => !t.endsWith('1')).join(' '))
 ok('三色门按层段分级 + 铁门在 7/14/21F',
@@ -181,6 +182,34 @@ ok('暗门奖励不给铁剑/铁盾/大血瓶（不破坏 v0.9 难度曲线）',
 ok('前 7 层的暗门都以黄钥匙为主（保证 7F 铁门可开）',
   data.secret.filter(s => s.floor < 7 && s.item === 'key_y').length >= 5,
   data.secret.filter(s => s.floor < 7 && s.item === 'key_y').length + ' 处')
+
+// ---- 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封印门 ----
+console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封印门 ===')
+const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
+const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
+const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
+ok('meta.schema 升到 5', data.meta.schema === 5, String(data.meta.schema))
+ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
+  floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
+ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
+ok('老者 E 只在 12F 房间，且全塔唯一', floorHas(12, 'E') && totalOf('E') === 1)
+ok('锁匠工具 j 在 13F、钱袋 q 在 19F，各唯一',
+  floorHas(13, 'j') && floorHas(19, 'q') && totalOf('j') === 1 && totalOf('q') === 1)
+ok('地图已无炸弹拾取格 o（炸弹改为商店购买）', totalOf('o') === 0, totalOf('o') + ' 处')
+ok('items 仍保留 bomb 定义（供商店 effect 用），但不再放置到地图',
+  data.items.some(i => i.id === 'bomb' && i.ch === 'o') && totalOf('o') === 0)
+ok('SECRET 奖励不再含炸弹（改金币轮换）',
+  data.secret.every(s => !/bomb/.test(s.item) && !/bomb/.test(s.story)),
+  [...new Set(data.secret.map(s => s.item))].join(' '))
+ok('怪物表全部带 exp（m3 王为 0）',
+  data.monsters.every(m => Number.isInteger(m.exp) && m.exp >= 0) &&
+  data.monsters.find(m => m.id === 'm3').exp === 0,
+  data.monsters.map(m => m.exp).join(','))
+ok('hero0 带 exp / flags 且初始为 0', data.hero0.exp === 0 && data.hero0.flags === 0)
+ok('老者 / 任务道具的 effect.flag 位正确（2 / 4 / 8）',
+  data.items.find(i => i.id === 'npc_elder').effect.flag === 2 &&
+  data.items.find(i => i.id === 'quest_lockpick').effect.flag === 4 &&
+  data.items.find(i => i.id === 'quest_moneybag').effect.flag === 8)
 
 console.log('\n=== 2. 生成物语义等价 ===')
 const PAIRS = [

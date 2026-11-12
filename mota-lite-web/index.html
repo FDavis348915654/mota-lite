@@ -22,8 +22,7 @@
           <div class="crown"></div>
           <div class="screen" id="screen">
             <div class="statusbar"><span>9:41</span><span>MOTA</span></div>
-            <!-- v0.12：HUD 拆成 3 行（楼层名 / HP·攻·防 / 三色钥匙·金币），
-                 每行都有足够宽度把字号放大到 15/14/13px，适配 212×520 手环屏。 -->
+            <!-- v0.12 拆 3 行放大字号；v0.13 第三行补经验 E（打怪获得，法师处兑换）。 -->
             <div class="hud" id="hud">
               <div class="hud-row hud-row-title">
                 <span class="hud-floor" id="hudFloor">1F</span>
@@ -38,6 +37,7 @@
                 <span class="hud-kb" id="hudKb">B0</span>
                 <span class="hud-kr" id="hudKr">R0</span>
                 <span class="hud-gold" id="hudGold">G0</span>
+                <span class="hud-exp" id="hudExp">E0</span>
               </div>
             </div>
             <!-- v0.8：整层 13×15 = 195 个固定槽位全部渲染，.viewport 只裁出 7×9 一屏；
@@ -49,7 +49,9 @@
             <div class="tip" id="tip">滑动开始爬塔</div>
 
             <!-- 方向键已移除：直接点击格子移动，见 app.js gridEl click + findPath。
-                 实体格（道具 / 怪物 / 商店 / NPC）必须点它本身才会交互，寻路不穿越。 -->
+                 实体格（道具 / 怪物 / 商店 / NPC）必须点它本身才会交互，寻路不穿越。
+                 v0.13：删底部被胶囊圆角裁掉的小字提示；按钮区整体上移收窄到圆角安全区。
+                 「炸弹 / 购买」初始隐藏，分别由「救出 12F 老者 / 首次走到商店旁」解锁，见 app.js renderHud()。 -->
             <div class="action-bar" id="actionBar">
               <button class="action-btn" id="btnActFlyUp"    title="飞行器 · 升一层（只能去已探索的楼层）">—</button>
               <button class="action-btn" id="btnActFlyDown"  title="飞行器 · 降一层（只能去已探索的楼层）">—</button>
@@ -58,7 +60,6 @@
               <button class="action-btn act-codex" id="btnActCodex" title="怪物图鉴（需先拾取图鉴）">—</button>
               <button class="action-btn act-newgame" id="btnActNewGame" title="开始新游戏（覆盖当前存档）">—</button>
               <button class="action-btn act-settings" id="btnActSettings" title="设置">—</button>
-              <span class="action-hint" id="actionHint">—</span>
             </div>
 
             <div class="over" id="over" hidden>
@@ -72,6 +73,9 @@
                 <div class="story-art"></div>
                 <div class="story-title" id="storyTitle"></div>
                 <div class="story-body" id="storyBody"></div>
+                <!-- v0.13：商店 / 法师兑换是常驻弹层，这里实时显示金币 / 经验余额，
+                     购买后原地刷新而不关闭；「继续」按钮在这类弹层里隐藏，只靠「离开」关闭。 -->
+                <div class="story-status" id="storyStatus" hidden></div>
                 <div class="story-actions" id="storyActions"></div>
                 <button class="story-continue" id="storyContinue"></button>
               </div>
@@ -160,6 +164,7 @@
           <div class="kv"><span>楼层 / 坐标</span><b id="iPos">—</b></div>
           <div class="kv"><span>HP / 攻 / 防</span><b id="iHero">—</b></div>
           <div class="kv"><span>黄钥匙 / 金币</span><b id="iKeys">—</b></div>
+          <div class="kv"><span>经验（法师处兑换）</span><b id="iExp">0</b></div>
           <div class="kv"><span>已走步数</span><b id="iSteps">0</b></div>
           <div class="kv"><span>存档体积</span><b id="iSaveSize">—</b></div>
           <div class="save-bar"><div class="save-bar-fill" id="saveBarFill"></div></div>
@@ -223,9 +228,9 @@
         <div class="card wide">
           <h2>存档工作台 <span class="h2-note">自动存档 · 单槽</span></h2>
           <p class="dim" id="saveSlotNote"></p>
-          <p class="dim">粘贴存档串用 <code>deserialize()</code> 复原进度；兼容 v1 旧档，坏档安全返回 null。</p>
+          <p class="dim">粘贴存档串用 <code>deserialize()</code> 复原进度；存档格式已升级到 v4（head 16 段，含经验与标志位），旧档作废重开，坏档安全返回 null。</p>
           <div class="import-row">
-            <input id="saveInput" type="text" spellcheck="false" placeholder="2|0,1,7,200,10,10,0,0,0,0,0,0,0|">
+            <input id="saveInput" type="text" spellcheck="false" placeholder="4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0">
             <button id="btnImport">载入存档</button>
           </div>
           <div class="btn-row">

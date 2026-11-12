@@ -21,7 +21,19 @@
 //
 // v0.12 经典机制补全：暗门 A（伪装墙，撞开显形并结算墙后奖励）、铁门 G
 // （加厚门，DOOR_COST 规定消耗 3 把黄钥匙）、商店第 4 项「黄钥匙」形成钥匙经济。
-// 三者都不新增存档字段：暗门/铁门只写 opened 的 '.' 变更集，钥匙数仍在 hero.keys 里。
+//
+// v0.13 大版本（用户一轮需求）：
+//   ① 门改「撞门开门、停原地」（与怪物/道具 v0.11 语义统一），不再开门即通过；
+//   ② 击杀怪物得经验 exp（基础值 × 楼层档 1/2/3），8F 法师救出后常驻，
+//      可反复用 30 经验兑换 攻+3 / 防+3 / 生命+100（MAGE_GOODS / mageBuy）；
+//   ③ 盗贼 T 任务线（常驻 NPC）：救出 -> 找回 13F 锁匠工具 j -> 他撬开 16F 封印门 Z
+//      -> 找回 19F 钱袋 q -> 给重谢并离塔；Z 是唯一通往上层的硬门槛，钥匙开不了；
+//   ④ 老者 E（12F 房间）：救出后解锁炸弹能力并赠 1 枚，商店新增第 5 项「炸弹 30G」；
+//      地图上的炸弹拾取全部移除（配置层已删），炸弹成为中后期能力；
+//   ⑤ 「购买」按钮的首遇解锁、商店/兑换界面不自动关闭等交互在宿主层，
+//      逻辑层只负责 flags 的写入。flags 位字段：1 shopSeen / 2 bombUnlocked /
+//      4 lockpick / 8 moneybag / 16 mageFreed / bits5-6 thiefStage(0~3)。
+//   存档升 v4：head 追加 exp 与 flags 两个字段（16 字段），v1~v3 旧档作废重开。
 
 import {
   FLOORS, HERO0, TILE_COLOR, TILE_CHAR, DOOR_KEY, DOOR_COST, FLOOR_SCALE,
@@ -55,9 +67,39 @@ export const CONFIG = {
   HANDHELD_SAVE_LIMIT: 128, // 手环端 @system.storage 的参考上限，仅用于 UI 提示；移植时须恢复（spec 附 D）
   SHOP_COST: 20,        // 商店一次交易花费金币（经典 21 层魔塔固定价）
   KEY_COST: 20,         // v0.12：商店补 1 把黄钥匙的价格（经典魔塔商人卖钥匙）
+  BOMB_COST: 30,        // v0.13：老者解锁后商店补 1 枚炸弹的价格（中后期能力，比攻防贵）
+  EXP_COST: 30,         // v0.13：法师处一次经验兑换的花费（全塔总经验约 30 次兑换）
   SHOP_ATK: 3,          // 兼容旧口径：1F 买攻 +3
   SHOP_TIER_FLOORS: 7,  // 每 7 层一档：经典 50 层「更高楼层商店同价回报更好」
   SHOP_TIER_BONUS: 2    // 每档额外 +2 攻 / +2 防；血另按 20×档 递增
+}
+
+// v0.13：hero.flags 位字段（一个整数进存档，避免存档格式再次膨胀）
+export const FLAG = {
+  SHOP_SEEN: 1,       // 首次撞过商店 N -> 宿主层「购买」按钮出现
+  BOMB_UNLOCK: 2,     // 救出老者 E -> 炸弹按钮 / 商店炸弹项解锁
+  LOCKPICK: 4,        // 持有锁匠工具 j（盗贼任务一）
+  MONEYBAG: 8,        // 持有钱袋 q（盗贼任务二）
+  MAGE_FREED: 16      // 法师 M 已救出（此后撞 M 打开经验兑换而非再给奖励）
+}
+// 盗贼任务阶段存 flags 的 bit5-6：0 被困 / 1 已救（等锁匠工具）/ 2 已开门（等钱袋）/ 3 已离塔
+export function thiefStage(hero) { return ((hero.flags || 0) >> 5) & 3 }
+function setThiefStage(hero, st) { hero.flags = (hero.flags & ~(3 << 5)) | (st << 5) }
+
+// 封印门 Z 全塔唯一（16F 上楼唯一入口）：盗贼任务推进时远程撬开，直接清成地板
+function specialDoorPos() {
+  for (let f = 0; f < FLOORS.length; f++) {
+    const rows = FLOORS[f].rows
+    for (let y = 0; y < rows.length; y++) {
+      const x = rows[y].indexOf('Z')
+      if (x >= 0) return { floor: f, x, y }
+    }
+  }
+  return null
+}
+function setTileAt(s, floor, x, y, ch) {
+  if (!s.opened[floor]) s.opened[floor] = {}
+  s.opened[floor][y * FLOORS[floor].rows[0].length + x] = ch
 }
 
 // ---- 可走 / 实体：v0.8 点击交互的唯一判定标准 ----
@@ -163,6 +205,13 @@ function applyEffect(hero, eff) {
   if (eff.bomb) hero.bomb += eff.bomb
   if (eff.book) hero.book = 1         // v0.8：图鉴拿到即永久解锁，不累加
   if (eff.key)  hero.keys[eff.key] += eff.n
+  if (eff.flag) hero.flags = (hero.flags || 0) | eff.flag   // v0.13：任务/解锁标志位
+}
+
+// v0.13：击杀经验 = 怪物基础 exp × 楼层档（1~7F ×1 / 8~14F ×2 / 15~21F ×3）。
+// 与 shopTier 同口径分档；魔王 exp=0（通关即终局）。
+export function monsterExp(mon, floor) {
+  return (mon.exp || 0) * (shopTier(floor) + 1)
 }
 
 // ---- 一次输入 = 一次结算 = 一次视图提交 ----
@@ -181,8 +230,10 @@ export function resolveStep(prev, direction) {
   // 1. 墙 / 越界
   if (t === '#') { ev.push({ t: 'msg', text: '前方是墙' }); return { state: s, events: ev } }
 
-  // 2. 门：按 DOOR_COST 扣钥匙 + 该格变地板（开门即通过，不 return）
-  //    v0.12 铁门 G 是加厚门，消耗 3 把黄钥匙；普通三色门仍是 1 把。
+  // 2. 门：按 DOOR_COST 扣钥匙 + 该格变地板。
+  //    v0.13 起改为「撞门开门、停在原地」（用户原话：站在门旁边开门，开完停在原地，
+  //    不要站在之前门的格子上），与 v0.11 怪物/道具的「撞一下」语义完全统一；
+  //    门格已清成地板，再走一步才进去。v0.12 铁门 G 仍消耗 3 把黄钥匙。
   const needKey = DOOR_KEY[t]
   if (needKey) {
     const cost = DOOR_COST[t] || 1
@@ -196,6 +247,16 @@ export function resolveStep(prev, direction) {
     setTile(s, nx, ny, '.')
     ev.push({ t: 'vibrate' }, { t: 'msg', text: '门已打开' }, { t: 'save' })
     if (t === 'G') ev.push({ t: 'msg', text: '铁门开启 · 耗 ' + cost + ' 把黄钥匙' })
+    return { state: s, events: ev }
+  }
+
+  // 2.4 封印门 Z（v0.13）：16F 上楼唯一入口，三色钥匙都对不上符文锁，
+  //     只有盗贼任务线（交还锁匠工具）能远程撬开。撞它只给提示。
+  if (t === 'Z') {
+    ev.push({ t: 'vibrate' }, {
+      t: 'msg', text: '门上挂着符文锁，三色钥匙都对不上——也许盗贼有办法'
+    })
+    return { state: s, events: ev }
   }
 
   // 2.5 暗门 A（v0.12）：视觉与墙完全一致，只能主动「撞墙」才显形。
@@ -225,10 +286,12 @@ export function resolveStep(prev, direction) {
     }
     s.hero.hp -= r.hpCost
     s.hero.gold += mon.gold
+    const expGain = monsterExp(mon, s.floor)   // v0.13：击杀得经验，法师处可兑换攻防血
+    s.hero.exp = (s.hero.exp || 0) + expGain
     setTile(s, nx, ny, '.')
     ev.push({ t: 'vibrate' }, {
       t: 'msg',
-      text: '胜 ' + mon.name + ' -' + r.hpCost + 'HP +' + mon.gold + 'G'
+      text: '胜 ' + mon.name + ' -' + r.hpCost + 'HP +' + mon.gold + 'G +' + expGain + 'EXP'
     }, { t: 'save' })
     // v0.11 经典魔塔交互：撞怪 = 结算但不进入该格，英雄停在原地。
     // 怪格已清成地板，玩家再走一步才进去；门 / 楼梯 / 王座 / 暗格仍按各自语义移动。
@@ -236,7 +299,59 @@ export function resolveStep(prev, direction) {
     return { state: s, events: ev }
   }
 
-  // 4. 道具 / NPC
+  // 3.5 常驻 NPC（v0.13）：法师 M / 盗贼 T 救出后不清格、可反复撞上去对话，英雄停原地。
+  //     它们仍在 ITEMS 表里（首次救出走 applyEffect 的通用奖励通道），
+  //     但必须在本特判里拦截，否则会被下面的通用 item 分支清成地板。
+  if (t === 'M') {
+    if (!(s.hero.flags & FLAG.MAGE_FREED)) {
+      applyEffect(s.hero, itemByCh('M').effect)
+      s.hero.flags |= FLAG.MAGE_FREED
+      ev.push({ t: 'vibrate' }, {
+        t: 'msg', text: '已救出 被困的法师（防御 +8、生命 +100）'
+      }, { t: 'save' })
+    } else {
+      // 已救出的法师 = 经验兑换商，真正的兑换由宿主层弹界面后调 mageBuy()
+      ev.push({ t: 'msg', text: '法师：积攒的经验，要换点什么？' })
+    }
+    return { state: s, events: ev }
+  }
+  if (t === 'T') {
+    const st = thiefStage(s.hero)
+    if (st === 0) {
+      applyEffect(s.hero, itemByCh('T').effect)
+      setThiefStage(s.hero, 1)
+      ev.push({ t: 'vibrate' }, {
+        t: 'msg', text: '已救出 被困的盗贼（黄钥匙 +3、金币 +40）'
+      }, { t: 'save' })
+    } else if (st === 1) {
+      if (s.hero.flags & FLAG.LOCKPICK) {
+        s.hero.flags &= ~FLAG.LOCKPICK
+        setThiefStage(s.hero, 2)
+        const z = specialDoorPos()
+        if (z) setTileAt(s, z.floor, z.x, z.y, '.')   // 远程撬开 16F 封印门
+        ev.push({ t: 'vibrate' }, {
+          t: 'msg', text: '盗贼掂了掂工具：16F 的封印门，开了'
+        }, { t: 'save' })
+      } else {
+        ev.push({ t: 'msg', text: '盗贼：我的锁匠工具落在 13F 房间里，帮我找回来' })
+      }
+    } else if (st === 2) {
+      if (s.hero.flags & FLAG.MONEYBAG) {
+        s.hero.flags &= ~FLAG.MONEYBAG
+        setThiefStage(s.hero, 3)
+        s.hero.hp += 300; s.hero.atk += 5; s.hero.def += 5
+        setTile(s, nx, ny, '.')   // 盗贼离塔，格子清空
+        ev.push({ t: 'vibrate' }, {
+          t: 'msg', text: '盗贼收下钱袋，留下谢礼后消失在暗道（生命 +300、攻 +5、防 +5）'
+        }, { t: 'save' })
+      } else {
+        ev.push({ t: 'msg', text: '盗贼：19F 房间有我一袋钱，取来咱们两清' })
+      }
+    }
+    return { state: s, events: ev }
+  }
+
+  // 4. 道具 / 一次性 NPC（老者 E、任务道具 j/q 也走这里：effect.flag 写标志位后清格）
   const item = itemByCh(t)
   if (item) {
     applyEffect(s.hero, item.effect)
@@ -284,9 +399,14 @@ export function resolveStep(prev, direction) {
   }
 
   // 7. 商店：v0.8 起商人也是「不可踩上去」的实体，撞上去只对话不移动。
-  //    真正交易由宿主层弹文本框后调用 shopBuy()，逻辑层不引入 UI 概念。
+  //    v0.13：首次撞商店写入 SHOP_SEEN（宿主层据此让「购买」按钮出现）；
+  //    vibrate 让 step() 的 progressed 为 true，键盘撞商店也能弹交易框（补 v0.8 遗漏）。
   if (t === 'N') {
-    ev.push({ t: 'msg', text: '商人：欢迎光临，看看货吧' })
+    if (!(s.hero.flags & FLAG.SHOP_SEEN)) {
+      s.hero.flags |= FLAG.SHOP_SEEN
+      ev.push({ t: 'save' })
+    }
+    ev.push({ t: 'vibrate' }, { t: 'msg', text: '商人：欢迎光临，看看货吧' })
     return { state: s, events: ev }
   }
 
@@ -361,7 +481,8 @@ export const SHOP_GOODS = [
   { kind: 'atk', label: '攻击', stat: 'atk' },
   { kind: 'def', label: '防御', stat: 'def' },
   { kind: 'hp',  label: '生命', stat: 'hp' },
-  { kind: 'key', label: '黄钥匙', stat: 'key' }
+  { kind: 'key', label: '黄钥匙', stat: 'key' },
+  { kind: 'bomb', label: '炸弹', stat: 'bomb' }   // v0.13：需先救老者解锁
 ]
 
 export function shopTier(floor) {
@@ -376,6 +497,11 @@ export function shopOffer(kind, floor) {
     return { kind: 'key', label: '黄钥匙', stat: 'key', amount: 1,
       cost: CONFIG.KEY_COST, tier }
   }
+  // v0.13：炸弹也是固定量固定价（中后期能力，不随档位变强）
+  if (good.kind === 'bomb') {
+    return { kind: 'bomb', label: '炸弹', stat: 'bomb', amount: 1,
+      cost: CONFIG.BOMB_COST, tier }
+  }
   const amount = good.kind === 'hp'
     ? 100 + tier * 20 * CONFIG.SHOP_TIER_BONUS
     : CONFIG.SHOP_ATK + tier * CONFIG.SHOP_TIER_BONUS
@@ -388,6 +514,11 @@ export function shopBuy(prev, kind) {
   const ev = []
   if (s.ended) return { state: s, events: ev }
   const offer = shopOffer(kind || 'atk', s.floor)
+  // v0.13：炸弹是「技能型商品」，没救老者之前商人不会卖
+  if (offer.kind === 'bomb' && !(s.hero.flags & FLAG.BOMB_UNLOCK)) {
+    ev.push({ t: 'msg', text: '商人：这玩意儿太烈，得先懂行——听说 12F 关着位老者' })
+    return { state: s, events: ev }
+  }
   if (s.hero.gold < offer.cost) {
     ev.push({ t: 'msg', text: '金币不足（需 ' + offer.cost + 'G）' })
     return { state: s, events: ev }
@@ -397,6 +528,36 @@ export function shopBuy(prev, kind) {
   else s.hero[offer.stat] += offer.amount
   ev.push({ t: 'vibrate' }, {
     t: 'msg', text: '成交：' + offer.label + ' +' + offer.amount + '（-' + offer.cost + 'G）'
+  }, { t: 'save' })
+  return { state: s, events: ev }
+}
+
+// ---- v0.13：法师经验兑换（救出 8F 法师后常驻，30 经验换一次强化）----
+// 与商店同构但花经验不花金币；量不按楼层档位（法师法力不因楼层变），
+// 总量受「全塔经验约 900+」自然约束，约可换 30 次，与商店经济量级相当。
+export const MAGE_GOODS = [
+  { kind: 'atk', label: '攻击', stat: 'atk', amount: 3 },
+  { kind: 'def', label: '防御', stat: 'def', amount: 3 },
+  { kind: 'hp',  label: '生命', stat: 'hp',  amount: 100 }
+]
+
+export function mageBuy(prev, kind) {
+  const s = clone(prev)
+  const ev = []
+  if (s.ended) return { state: s, events: ev }
+  if (!(s.hero.flags & FLAG.MAGE_FREED)) {
+    ev.push({ t: 'msg', text: '还没有救出法师（8F 房间）' })
+    return { state: s, events: ev }
+  }
+  const g = MAGE_GOODS.find(x => x.kind === kind) || MAGE_GOODS[0]
+  if ((s.hero.exp || 0) < CONFIG.EXP_COST) {
+    ev.push({ t: 'msg', text: '经验不足（需 ' + CONFIG.EXP_COST + ' EXP，现有 ' + (s.hero.exp || 0) + '）' })
+    return { state: s, events: ev }
+  }
+  s.hero.exp -= CONFIG.EXP_COST
+  s.hero[g.stat] += g.amount
+  ev.push({ t: 'vibrate' }, {
+    t: 'msg', text: '法师施法：' + g.label + ' +' + g.amount + '（-' + CONFIG.EXP_COST + ' EXP）'
   }, { t: 'save' })
   return { state: s, events: ev }
 }
@@ -431,16 +592,19 @@ export function buildCells(s) {
 }
 
 // ---- 存档：紧凑串，不是 JSON ----
-// v3: "3|f,x,y,hp,atk,def,gold,ky,kb,kr,e,fly,bomb,book|fi.i.i;fi.i.i|0.3.4"
-//   e    = 0 游戏中 / 1 阵亡 / 2 通关
-//   book = 0/1 是否已持有图鉴
+// v4: "4|f,x,y,hp,atk,def,gold,ky,kb,kr,e,fly,bomb,book,exp,flags|fi.i.i;fi.i.i|0.3.4"
+//   e     = 0 游戏中 / 1 阵亡 / 2 通关
+//   book  = 0/1 是否已持有图鉴
+//   exp   = 经验值（v0.13 击杀怪物获得，法师处兑换）
+//   flags = 位字段（1 shopSeen / 2 bombUnlock / 4 lockpick / 8 moneybag / 16 mageFreed
+//           / bit5-6 thiefStage），把「商店解锁、炸弹解锁、盗贼任务」压进一个整数。
 //   第 3 段：每层已清成地板的格子下标（setTile 只会写 '.'，故不必存新字符）
 //   第 4 段：已探索楼层（升序、点分）。飞行器只能跳回这里。
-// v2（v0.5~v0.7 旧档）: 13 个字段、首位 2、没有 book 段与 explored 段；
-//   读入时 book 记 0，explored 由「当前层 + opened 出现过的层」推断（不改写旧档语义）。
-// v1（M1 / 在线版 v0.3 旧档）: 11 个字段、首位 1；读入时补 fly=0 / bomb=0 / book=0。
-// 在线版用 localStorage，无 128B 硬限制；21 层 13×15 大地图通关存档实测 1025B，SAVE_LIMIT 放宽到 4096；
-// 真机移植时须恢复 128B 并改用位图压缩（见 spec 附 D）。
+// v0.13 起【不再兼容 v1~v3 旧档】（用户已授权「开发阶段格式调整可放弃旧存档」）：
+//   旧档若已救出 M/T/E 却带 flags=0，会与「常驻 NPC / 16F 封印门 Z」产生不可解的
+//   矛盾（Z 永远开不了 -> 死档），因此旧档直接作废重开，deserialize 只认 '4'。
+// 在线版用 localStorage，无 128B 硬限制；21 层 13×15 大地图通关存档实测约 1KB，
+// SAVE_LIMIT 4096；真机移植时须恢复 128B 并改用位图压缩（见 spec 附 D）。
 export function serialize(s) {
   const h = s.hero
   const e = s.ended === 'dead' ? 1 : (s.ended === 'win' ? 2 : 0)
@@ -448,7 +612,8 @@ export function serialize(s) {
     s.floor, s.x, s.y,
     h.hp, h.atk, h.def, h.gold,
     h.keys.y, h.keys.b, h.keys.r, e,
-    h.fly, h.bomb, h.book || 0
+    h.fly, h.bomb, h.book || 0,
+    h.exp || 0, h.flags || 0
   ].join(',')
   const groups = []
   Object.keys(s.opened).forEach(f => {
@@ -458,28 +623,22 @@ export function serialize(s) {
   const explored = Object.keys(s.explored || {})
     .filter(f => s.explored[f])
     .map(Number).sort((a, b) => a - b).join('.')
-  return '3|' + head + '|' + groups.join(';') + '|' + explored
+  return '4|' + head + '|' + groups.join(';') + '|' + explored
 }
 
 export function deserialize(text) {
   if (typeof text !== 'string') return null
   const seg = text.split('|')
-  const ver = seg[0]
-  if (ver !== '3' && ver !== '2' && ver !== '1') return null
-  const v3 = ver === '3', v2 = ver === '2'
-  if (seg.length !== (v3 ? 4 : 3)) return null
+  if (seg[0] !== '4' || seg.length !== 4) return null
 
   const a = seg[1].split(',')
-  if (a.length !== (v3 ? 14 : (v2 ? 13 : 11))) return null
+  if (a.length !== 16) return null
   const n = a.map(Number)
   if (n.some(v => !Number.isInteger(v) || v < 0)) return null
-  const [floor, x, y, hp, atk, def, gold, ky, kb, kr, e] = n
-  const fly = (v2 || v3) ? n[11] : 0
-  const bomb = (v2 || v3) ? n[12] : 0
-  const book = v3 ? n[13] : 0
-  // fly / bomb 是「持有数量」而非布尔标志：炸弹可拾到多个（实测通关态 bomb=5）。
-  // fly 在 v0.8 起语义收敛为 0/1（全塔唯一、不累加），上限仍用 99 兼容旧档里的历史值。
-  if (!FLOORS[floor] || e > 2 || fly > 99 || bomb > 99 || book > 1) return null
+  const [floor, x, y, hp, atk, def, gold, ky, kb, kr, e, fly, bomb, book, exp, flags] = n
+  // fly 在 v0.8 起语义收敛为 0/1（全塔唯一），上限仍用 99 兼容历史值；
+  // flags 当前用 7 个位（含 thiefStage 两位），上限 127。
+  if (!FLOORS[floor] || e > 2 || fly > 99 || bomb > 99 || book > 1 || flags > 127) return null
   const W = FLOORS[floor].rows[0].length, H = FLOORS[floor].rows.length
   if (x >= W || y >= H) return null
 
@@ -503,24 +662,20 @@ export function deserialize(text) {
     }
   }
 
-  // 已探索楼层：v3 直接读；v2/v1 没有这段，按「当前层 + 有清格记录的层」推断，
-  // 避免旧档升级后飞行器完全不可用（也不凭空放大成「全塔已探索」）。
   const explored = {}
-  if (v3 && seg[3]) {
+  if (seg[3]) {
     const parts = seg[3].split('.')
     for (let i = 0; i < parts.length; i++) {
       const f = Number(parts[i])
       if (!Number.isInteger(f) || !FLOORS[f]) return null
       explored[f] = 1
     }
-  } else {
-    Object.keys(opened).forEach(f => { explored[f] = 1 })
   }
   explored[floor] = 1
 
   return {
-    v: v3 ? 3 : (v2 ? 2 : 1), floor, x, y,
-    hero: { hp, atk, def, gold, keys: { y: ky, b: kb, r: kr }, fly, bomb, book },
+    v: 4, floor, x, y,
+    hero: { hp, atk, def, gold, exp, flags, keys: { y: ky, b: kb, r: kr }, fly, bomb, book },
     opened, explored,
     ended: e === 1 ? 'dead' : (e === 2 ? 'win' : null)
   }
