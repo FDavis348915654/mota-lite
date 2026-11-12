@@ -181,5 +181,18 @@ ok('v0.14 精英怪有图鉴描述与引导剧情',
 ok('v0.14 四处楼层文案都有宝库线索',
   ['floor_3f', 'floor_9f', 'floor_14f', 'floor_18f'].every(k =>
     TEXTS.story[k] && /守卫|宝库/.test(TEXTS.story[k].body)))
+// ---- v0.16 小精灵 / 能量核心 资源与文案 ----
+ok('atlas 有 fairy / core 两帧且 e/C 映射到它们',
+  !!atlas.frames.fairy && !!atlas.frames.core &&
+  atlas.tileMap.e === 'fairy' && atlas.tileMap.C === 'core')
+ok('atlas 帧数 = count（v0.16 由 44 增至 46 帧）',
+  Object.keys(atlas.frames).length === atlas.count && atlas.count === 46)
+ok('v0.16 四段剧情 / 17F 护盾提示 / itemDesc 齐全',
+  !!TEXTS.story.fairy_intro && !!TEXTS.story.core_hint &&
+  !!TEXTS.story.fairy_charge && !!TEXTS.story.fairy_done &&
+  /能量护盾/.test(TEXTS.story.floor_17f.body) &&
+  !!TEXTS.itemDesc.core_energy && !!TEXTS.itemDesc.npc_fairy)
+ok('帮助文案说明能量护盾 / 交互等待一拍',
+  /能量护盾/.test(TEXTS.help.rule) && /等一小会儿/.test(TEXTS.help.controls))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

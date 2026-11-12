@@ -73,6 +73,21 @@ ELITE_SHIFT = 9                          # 强度超前 9 层（用户选「超�
 ELITE_CH = 'X'                           # 宝库守卫字符（原字符集未占用）
 BASE_MOBS = 5                            # 每层普通怪目标数（原 2~3）
 
+# ---- v0.16：小精灵 / 能量核心 / 屏障护盾 --------------------------------
+# 用户三项确认（AskUserQuestion 全选推荐）：核心 13F / 卡关 17F；
+# 能量护盾硬门槛；怪 9->12 + 全塔损血上调约 30%。
+#   1F 出生点旁放常驻小精灵 e：未持核心讲背景 / 持核心则一次性大幅强化；
+#   13F treasure 房放全塔唯一能量核心 C（与锁匠工具 j 同房，通关必经，
+#   玩家不可能「跳过核心直接卡死在 17F」）；
+#   17F 起怪物数值上台阶，未强化时额外带「能量护盾」强制不可破防 ——
+#   商店买攻防 / 法师兑经验都绕不过，保证「不回去强化就一定过不去」。
+FAIRY_CH = 'e'
+CORE_CH = 'C'
+CORE_FLOOR = 13          # 1-based
+BARRIER_FLOOR = 17       # 1-based
+BARRIER_BOOST = {'hp': 1.5, 'atk': 1.25, 'def': 1.45}
+FAIRY_CHARGE = {'atk': 80, 'def': 60, 'hp': 1200}
+
 # 门 / 楼梯 / 房间 / 王座的保护邻域：隔间墙与宝库都不得占用
 PROTECTED_BASE = {(1, 1), (2, 1), (1, 2), (11, 13), (10, 13), (11, 12),
                   (11, 11), (10, 12), (10, 11), (11, 10)}
@@ -149,8 +164,11 @@ CURVE_A = [23, 23, 26, 42, 52, 55, 58, 81, 91, 91, 97, 110, 133, 133,
            136, 149, 162, 162, 178, 191, 191]
 CURVE_D = [20, 43, 46, 56, 76, 92, 95, 103, 113, 126, 132, 135, 155, 178,
            181, 181, 201, 217, 230, 240, 240]
-CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16)
-BOSS_FINAL = {'hp': 950, 'atk': 300, 'def': 56}
+CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16, lossMul=1.3)
+# v0.16：精灵大幅强化后玩家终局 DEF 约 338，旧 atk=300 会让魔王战零伤
+# （v0.15 为 -110HP）。提到 380 使终局仍有 3×(380-338)=126 左右损血，
+# 保持「难度提高」下 Boss 战不至于毫无压力；裸属性仍破不了魔王的防。
+BOSS_FINAL = {'hp': 950, 'atk': 380, 'def': 56}
 
 # 分层投放：低层入门怪 → 中层进阶 → 高层高危 → 顶层精英
 def tier_chars(n):
@@ -160,7 +178,7 @@ def tier_chars(n):
     return ['5', '7', '8']
 
 
-def retier_monsters(floors):
+def retier_monsters(floors, skip_by_floor=None):
     """按楼层段替换主路怪字符。
 
     房间开口守怪格 (6,9) 是必经典「把门怪」，保持常规怪种，不换成
@@ -168,6 +186,9 @@ def retier_monsters(floors):
     轮替起点用层号错开 (k+fi)，保证段内每种怪都能进场（否则每层只有
     2 只主路怪，三怪种的 pool 永远取不到第 3 项，石头人/魔法警卫会缺席）。
     只做字符替换，不改变连通性 / 楼梯 / 房内宝物。
+    v0.15：skip_by_floor 传入瓶颈格与凹室入口。守路怪 / 守护怪是唯一通道
+    上的「必打怪」，必须保持 guard_pool 选的常规怪种；一旦被替换成破防怪
+    或 pierce 真实伤害怪，进层打不过就会把主路切断成死局。
     """
     for fi, f in enumerate(floors):
         n = fi + 1
@@ -175,10 +196,13 @@ def retier_monsters(floors):
             continue  # 王座层保留魔王阵
         pool = tier_chars(n)
         rows = [list(r) for r in f['rows']]
+        skip = {(6, 9)}
+        if skip_by_floor:
+            skip |= set(skip_by_floor[fi])
         k = 0
         for y in range(1, len(rows) - 1):
             for x in range(1, len(rows[0]) - 1):
-                if x == 6 and y == 9:
+                if (x, y) in skip:
                     continue
                 if rows[y][x] in ('1', '2', '4'):
                     rows[y][x] = pool[(k + fi) % len(pool)]
@@ -197,7 +221,7 @@ def build_floor_scale(cnt):
     for f in range(21):
         g = min(f + 1, 20)
         pa, pd = CURVE_A[g], CURVE_D[g]
-        floor_loss = c['loss0'] + c['lossK'] * f
+        floor_loss = (c['loss0'] + c['lossK'] * f) * c.get('lossMul', 1.0)
         per_mon = floor_loss / max(1, cnt[f])
         mph = max(2, per_mon / (c['rounds'] - 1))
         per_hit = max(8, round(pa * 0.7))
@@ -284,17 +308,20 @@ def secret_forbidden(has_room):
     return forbid
 
 
-def add_secret(g, rng, floor_no, has_room, extra_forbid=None):
+def add_secret(g, rng, floor_no, has_room, extra_forbid=None, forbid_rows=None):
     """在墙上挑一格改成暗门 A，返回 (x, y)；找不到就新砌一段内墙再取。
 
     暗门是「撞一下才显形」的支线奖励，不是必经路：生成阶段它始终计作墙，
     因此 flood_ok 的连通性结论与不放暗门时完全一致。
     v0.14：extra_forbid 传入宝库新砌的墙，避免暗门恰好撞在宝库墙上、
     显形后形成绕过精英怪的第二个入口。
+    v0.15：forbid_rows 传入闸墙所在行。闸墙是整行贯通的割点，暗门若落在
+    闸墙上，撞开显形后等于凭空多出一个缺口，守路怪的拦路语义直接失效。
     """
     forbid = secret_forbidden(has_room)
     if extra_forbid:
         forbid |= set(extra_forbid)
+    fr = set(forbid_rows or ())
     # v0.14 加密实体后，若只判「非墙」，会出现暗门唯一邻格是血瓶 / 宝石
     # 这类实体格的情况（8F / 14F 实测）——玩家得先捡道具清格才能撞。
     # 改为要求至少一个真正的可走格（. @ H U D W）。
@@ -305,7 +332,7 @@ def add_secret(g, rng, floor_no, has_room, extra_forbid=None):
     cand = []
     for y in range(1, H - 1):
         for x in range(1, W - 1):
-            if g[y][x] != '#' or (x, y) in forbid:
+            if g[y][x] != '#' or (x, y) in forbid or y in fr:
                 continue
             # 至少一个四邻是可走格，玩家才可能走过去撞它
             if has_walk_neighbor(x, y):
@@ -317,7 +344,7 @@ def add_secret(g, rng, floor_no, has_room, extra_forbid=None):
     # 没有合适的现成内墙（例如顶层王座台、或被保护集全挡住）：
     # 在普通地板上砌 1 格墙，flood_ok 通过再换成暗门，保证不切断主路。
     pool = [(x, y) for y in range(2, H - 2) for x in range(2, W - 2)
-            if g[y][x] == '.' and (x, y) not in forbid]
+            if g[y][x] == '.' and (x, y) not in forbid and y not in fr]
     rng.shuffle(pool)
     for x, y in pool:
         if not has_walk_neighbor(x, y):
@@ -365,13 +392,184 @@ def candidate_pool(g, has_room, avoid=None):
     return out
 
 
-def add_corridors(g, rng, floor_no, has_room):
+# ---- v0.15：走廊骨架（横贯闸墙 + 单格瓶颈）+ 支路凹室 ----
+# 用户反馈「基本没有怪物拦路、可以毫无阻碍进入后一层」。根因（node 探针实测）：
+# v0.14 每层空地 80~92 格、怪随机撒在候选池，(1,1)->U(11,13) 最短 22 步
+# = 曼哈顿直线，路上只踩 0~3 只怪；上楼门钥匙本层地上白捡，2F 甚至能
+# 纯空地 24 步零战斗直达 U。
+# 改法：横贯闸墙把大厅切成若干带，每道墙只留 1 格缺口（真割点），缺口站
+# 「守路怪」；支路凹室三面墙 + 入口守护怪，把强化道具/补给变成清支线才有。
+# 数值口径不变：怪数进 count_mobs -> build_floor_scale 按怪数摊薄目标总损血，
+# 单层总损血仍等于 CURVE_CFG 的 loss0+lossK*f，战斗场次变多、每场更轻。
+GATE_TARGET = 3
+GUARD_LOW = ['1', '2']
+GUARD_MID = ['2', '4']
+GUARD_HIGH = ['4', '7']
+ALCOVE_COUNT = 2
+TARGET_MOBS = 12
+ALCOVE_LOOT = ['a', 'd', 'P', 'g']   # 红宝石 / 蓝宝石 / 大血瓶 / 金币（不破坏攻防曲线）
+
+
+def guard_pool(n):
+    """守路怪只用常规怪种，且必须「进层就打得过」。
+
+    m6 石头人 defW=1.7 会造破防尖峰（v0.9 的 6F 根因），m5/m8 法师 pierce
+    真实伤害会绕开按 DEF 建模的损血曲线。瓶颈是唯一通道，一旦打不过，
+    findPath 把怪当墙、上下两带断开 -> 整层死局。故严格限定常规怪种。
+    """
+    if n <= 5:  return GUARD_LOW
+    if n <= 11: return GUARD_MID
+    return GUARD_HIGH
+
+
+def _reach(g, start, goal, blocked=None):
+    """生成期 BFS：暗门 A 视作墙，blocked 坐标也当墙。用于割点验证。"""
+    eb = set(blocked or ())
+    if start in eb or g[start[1]][start[0]] in WALL:
+        return False
+    seen = {start}
+    q = [start]
+    while q:
+        x, y = q.pop()
+        if (x, y) == goal:
+            return True
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < W and 0 <= ny < H): continue
+            if (nx, ny) in seen or (nx, ny) in eb: continue
+            if g[ny][nx] in WALL: continue
+            seen.add((nx, ny)); q.append((nx, ny))
+    return False
+
+
+def start_region(g, gates):
+    """「第一带」：从 (1,1) 出发、把闸墙缺口当墙后仍可达的格。
+
+    v0.9 的 CURVE_A / CURVE_D 是按「玩家进层先捡完道具、再打怪」建模的，
+    1F 裸属性 ATK10/DEF10 连史莱姆都打不过，靠的就是先捡铁剑铁盾。
+    v0.15 的闸墙会把道具隔到守路怪后面，形成「打不过怪 -> 拿不到道具 ->
+    更打不过」的死局（实测 1F 第 1 轮 lethal）。故成长道具 / 血瓶必须
+    固定投放到第一带，其余资源才放到后带由支线怪把守。
+    """
+    blocked = set(gates)
+    if g[1][1] in WALL:
+        return set()
+    seen = {(1, 1)}
+    q = [(1, 1)]
+    while q:
+        x, y = q.pop()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < W and 0 <= ny < H): continue
+            if (nx, ny) in seen or (nx, ny) in blocked: continue
+            if g[ny][nx] in WALL or g[ny][nx] in 'YBRGZT': continue
+            seen.add((nx, ny)); q.append((nx, ny))
+    return seen
+
+
+def gate_skeleton(g, rng, floor_no, has_room, vault_cells):
+    """横贯闸墙 + 单格缺口；返回瓶颈坐标 [(x, y)]。
+
+    每道闸墙把某一行 x=1..W-2 全砌墙、只留 gx 一格缺口。整行贯通 => 上下
+    两带之间除缺口外无路可走，堵住缺口 U 即不可达（真割点）。缺口 x 按层
+    号错开、下一道翻到另一侧，形成蛇形主路。逐道 flood_ok + 割点双验证，
+    失败整行回退。
+    房间层 y3~8 跳过：中央房间只经 (6,8)->(6,9) 连出，在 y9 封行必然把
+    房内切成孤岛，flood_ok 稳定失败并自动回退，最终得到 y2 / y10~11 两道。
+    y12 跳过：开放层上楼门位 (11,12) 可能落在此行，不能被闸墙覆盖。
+    """
+    skip = {1, 13, 12}
+    if has_room:
+        skip |= set(range(3, 9))
+    for vx, vy in vault_cells:
+        skip.add(vy)
+    prot = protected_cells(has_room)
+    gx0 = [2, 9, 4, 10, 3, 8, 5, 7, 2, 9, 4][(floor_no - 1) % 11]
+    # 起始行从 y=4 起：
+    #  ① y=3 行是校验脚本识别「房间层」的特征行（rows[3].slice(3,10)==='#######'），
+    #     闸墙若落在 y=3 会让开放层被误判成房间层（实测 10 -> 12 个）。
+    #  ② 第一带变成 y=1~3 三行，补给 / 钥匙有足够空间分散，不会连排堵死通道。
+    cand = [y for y in range(4, 12) if y not in skip]
+    gates, last_y = [], -10
+    for y in cand:
+        if len(gates) >= GATE_TARGET: break
+        if y - last_y < 2: continue
+        row = [g[y][x] for x in range(1, W - 1)]
+        if any(c not in '.#' for c in row): continue
+        gxc = [gx0] + [x for x in range(1, W - 1) if x != gx0]
+        gx = None
+        for x in gxc:
+            if 1 <= x <= W - 2 and g[y][x] == '.' and (x, y) not in prot:
+                gx = x; break
+        if gx is None: continue
+        old = [(x, g[y][x]) for x in range(1, W - 1)]
+        for x in range(1, W - 1):
+            if x != gx: g[y][x] = '#'
+        if flood_ok(g) and not _reach(g, (1, 1), (11, 13), {(gx, y)}):
+            gates.append((gx, y)); last_y = y
+            gx0 = (W - 1) - gx
+        else:
+            for x, c in old: g[y][x] = c
+    return gates
+
+
+def add_alcoves(g, rng, floor_no, has_room, vault_cells, gates, count=ALCOVE_COUNT):
+    """支路凹室：砌 3 面墙围出 1 格，留 1 面入口。入口站守护怪，凹室内放资源。
+
+    返回 [{'entry':(x,y),'cell':(x,y),'walls':[(x,y)..]}]。
+    逐段 flood_ok 兜底；这些墙连同瓶颈格一起传给 add_secret 的 extra_forbid，
+    避免暗门显形后形成绕过守路怪 / 守护怪的第二入口。
+    """
+    prot = protected_cells(has_room)
+    # v0.15：凹室是「打穿瓶颈后的支线」，绝不能落在第一带 —— 实测 1F 的
+    # y=1 空走廊被凹室守护怪占住，开局打不过就直接堵死进层唯一通道
+    # （solver 死局 + 点击模式走不到道具旁）。第一带只留给白捡补给。
+    banned = set(vault_cells) | set(gates) | start_region(g, gates)
+    out = []
+    for _ in range(count):
+        cells = [(x, y) for y in range(2, H - 2) for x in range(2, W - 2)
+                 if g[y][x] == '.' and (x, y) not in prot and (x, y) not in banned]
+        rng.shuffle(cells)
+        for x, y in cells:
+            dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            rng.shuffle(dirs)
+            done = False
+            for edx, edy in dirs:
+                ex, ey = x + edx, y + edy
+                walls = [(x + dx, y + dy) for dx, dy in dirs if (dx, dy) != (edx, edy)]
+                region = [(x, y), (ex, ey)] + walls
+                if any(not (1 <= a <= W - 2 and 1 <= b <= H - 2) for a, b in region):
+                    continue
+                if any((a, b) in prot or (a, b) in banned for a, b in region):
+                    continue
+                if any(g[b][a] != '.' for a, b in region):
+                    continue
+                old = [(a, b, g[b][a]) for a, b in region]
+                for a, b in walls:
+                    g[b][a] = '#'
+                if flood_ok(g):
+                    out.append({'entry': (ex, ey), 'cell': (x, y), 'walls': walls})
+                    banned |= set(region)
+                    done = True
+                    break
+                for a, b, c in old:
+                    g[b][a] = c
+            if done:
+                break
+    return out
+
+
+def add_corridors(g, rng, floor_no, has_room, avoid=None):
     """v0.14：把原来 5 段 2 格短墙升级为成体系的 3~4 格隔间墙，做出走廊纵深。
 
     逐段 flood_ok 兜底，失败即回退；避开门 / 楼梯 / 房间 / 王座保护邻域。
     只加墙、不减通路，因此不会破坏 v0.10「门封唯一入口」的结论。
+    v0.15：avoid 传入「第一带」，隔间短墙绝不落在进层补给区 —— 实测 1F 的
+    y=2 横贯短墙会把 y=1 空走廊与 y=3 补给行切开，点击模式规划不到钥匙旁。
     """
     prot = protected_cells(has_room)
+    if avoid:
+        prot |= set(avoid)
     for _ in range(18):
         L = rng.choice([3, 3, 4])
         horiz = rng.random() < 0.5
@@ -432,46 +630,88 @@ def add_vault(g, rng, floor_no, has_room):
     return None
 
 
-def place_entities(g, rng, floor_no, has_room, inner, special, avoid=None):
-    """在大厅按确定性布局铺实体；返回本层 H 坐标列表（供 hidden 配置）。"""
-    pool = candidate_pool(g, has_room, avoid)
-    rng.shuffle(pool)
-    idx = 0
+def place_entities(g, rng, floor_no, has_room, inner, special,
+                   avoid=None, gates=None, alcoves=None, start_cells=None):
+    """在大厅按确定性布局铺实体；返回本层 H 坐标列表（供 hidden 配置）。
 
-    def take():
-        nonlocal idx
-        c = pool[idx]; idx += 1
-        return c
+    v0.15：瓶颈格站守路怪（必打）、凹室入口站守护怪、凹室内放补给；
+    三色钥匙与其余道具仍撒在开阔区，保证「打穿主路即可上楼」。
+    """
+    gates = gates or []
+    alcoves = alcoves or []
+    guard_coords = set(gates) | {a['entry'] for a in alcoves}
+    loot_coords = {a['cell'] for a in alcoves}
+    banned = guard_coords | loot_coords | {w for a in alcoves for w in a['walls']}
+    pool = [c for c in candidate_pool(g, has_room, avoid) if c not in banned]
+    rng.shuffle(pool)
+    # v0.15：拆成「第一带 / 后带」两个池。
+    #   第一带是玩家进层唯一能先捡到补给的安全区（v0.9 的 CURVE_A/D 就是按
+    #   「先捡完道具再打怪」建模的），只放成长道具 / 血瓶 / 金币 / 钥匙；
+    #   散怪与暗格一律放后带。若散怪也挤进第一带，会把钥匙四邻的空格占光，
+    #   点击模式 findPath(blockEntities) 就规划不到「钥匙旁边一格」（实测 11 处）。
+    start_cells = start_cells or set()
+    # y=1 整行保留为纯空走廊：点击模式 findPath(blockEntities) 不穿越实体，
+    # 若第一带道具连排堵死 y=1，玩家就「走不到钥匙旁边一格」（实测 1F）。
+    # y=1 留空后，从 (1,1) 可横向走到任意列再向下取道具，第一带全程可达。
+    start_pool = [c for c in pool if c in start_cells and c[1] >= 2]
+    rest_pool = [c for c in pool if c not in start_cells]
+
+    def take_start():
+        return start_pool.pop(0) if start_pool else (rest_pool.pop(0) if rest_pool else None)
+
+    def take_rest():
+        return rest_pool.pop(0) if rest_pool else (start_pool.pop(0) if start_pool else None)
 
     hidden_here = []
 
-    # 1) 强化道具 2 个（攻击/防御成长，保证后期能破魔王防）
+    # 0) v0.15：守路怪 / 守护怪 / 凹室补给先占位（不消耗候选池）
+    gp = guard_pool(floor_no)
+    for i, (gx, gy) in enumerate(gates):
+        g[gy][gx] = gp[i % len(gp)]
+    for i, a in enumerate(alcoves):
+        ex, ey = a['entry']
+        g[ey][ex] = gp[(len(gates) + i) % len(gp)]
+        cx, cy = a['cell']
+        g[cy][cx] = ALCOVE_LOOT[(floor_no + i) % len(ALCOVE_LOOT)]
+
+    # 1) 强化道具 2 个（攻击/防御成长，保证后期能破魔王防）—— 第一带
     growth = ['a', 's', 'S', 'd']  # 红宝石+3atk / 铁剑+10atk / 铁盾+10def / 蓝宝石+3def
     for k in range(2):
-        x, y = take(); g[y][x] = growth[(floor_no + k) % len(growth)]
+        x, y = take_start(); g[y][x] = growth[(floor_no + k) % len(growth)]
 
-    # 2) v0.14：血瓶 / 金币各 2 处，配合加密的怪物提升地图密度
+    # 2) 血瓶 / 金币各 2 处 —— 第一带
     for k in range(2):
-        x, y = take(); g[y][x] = 'P' if (floor_no + k) % 2 else 'p'
-        x, y = take(); g[y][x] = 'g'
+        x, y = take_start(); g[y][x] = 'P' if (floor_no + k) % 2 else 'p'
+        x, y = take_start(); g[y][x] = 'g'
 
-    # 3) 钥匙（三色各一，保证任意门可开）
+    # 3) 钥匙（三色各一，保证任意门可开）—— 第一带
+    # v0.15：全部留在第一带，不被凹室守护怪 / 瓶颈怪挡住 —— 打穿主路即可上楼。
+    #   且必须有至少一个可走邻格：点击模式 findPath(blockEntities) 只能规划到
+    #   「实体旁边一格」，四邻全是道具/墙时玩家会看到「走不到它旁边」（1F 实测）。
     for k in 'ybr':
-        x, y = take(); g[y][x] = k
+        x, y = take_start()
+        for _ in range(40):
+            if not start_pool: break
+            if any(0 <= x + dx < W and 0 <= y + dy < H and g[y + dy][x + dx] == '.'
+                   for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                break
+            x, y = take_start()
+        g[y][x] = k
 
     # 4) v0.10：门不再随机撒在开放区（改由 make_floor 放在「唯一入口」）。
-    #    这里仍消耗一个候选坐标，保持后续实体投放顺序与旧版一致。
-    take()
+    #    这里仍消耗一个后带候选坐标，保持后续实体投放顺序与旧版一致。
+    take_rest()
 
-    # 5) v0.14：普通怪 2 -> BASE_MOBS(5) 个。字符交给 retier_monsters 按层段替换；
-    #    count_mobs 只统计常规怪（不含精英 X），build_floor_scale 仍按实际怪数
-    #    摊薄目标损血，加怪不会让单层「标准怪」数值凭空放大。
-    for k in range(BASE_MOBS):
-        x, y = take(); g[y][x] = ['1', '2', '4'][(floor_no + k) % 3]
+    # 5) v0.15：散怪全部放后带，补齐到 TARGET_MOBS。守路怪 / 守护怪 / 房门
+    #    守怪都算在内，统一由 count_mobs 统计后交给 build_floor_scale 按怪数
+    #    摊薄 —— 单层目标总损血不变，只战斗场次变多、每场更轻（保持曲线）。
+    placed_guards = len(gates) + len(alcoves) + (1 if has_room else 0)
+    for k in range(max(0, TARGET_MOBS - placed_guards)):
+        x, y = take_rest(); g[y][x] = ['1', '2', '4'][(floor_no + k) % 3]
 
-    # 6) 暗格 H（仅当该层有可用 story key）
+    # 6) 暗格 H（仅当该层有可用 story key）—— 后带
     if floor_no in HIDDEN_KEYS:
-        x, y = take(); g[y][x] = 'H'; hidden_here.append((x, y))
+        x, y = take_rest(); g[y][x] = 'H'; hidden_here.append((x, y))
 
     # 7) 房间内容：宝物 / NPC / 商人 / 图鉴 / 飞行器
     if has_room:
@@ -499,6 +739,7 @@ def place_entities(g, rng, floor_no, has_room, inner, special, avoid=None):
             loot = ['S', 'P', 'a']
             # v0.13 盗贼任务线道具：13F 藏「锁匠工具」、19F 藏「钱袋」
             if floor_no == 13: loot.append('j')
+            if floor_no == CORE_FLOOR: loot.append(CORE_CH)   # v0.16 能量核心（与 j 同房，通关必经）
             if floor_no == 19: loot.append('q')
             for c, (x, y) in zip(loot, inner):
                 g[y][x] = c
@@ -509,7 +750,13 @@ def place_entities(g, rng, floor_no, has_room, inner, special, avoid=None):
 
 
 def make_boss_floor(rng):
-    """顶层 21F：王座 W 三面封墙，正面 m3 魔王把守；其余大厅放成长道具。"""
+    """顶层 21F：王座 W 三面封墙，正面 m3 魔王把守；其余大厅放成长道具。
+
+    v0.15：21F 原本空地 61%、只有 4 只怪，是全塔唯一还「空荡荡」的层。
+    补两道竖闸墙把大厅切成三条竖带，缺口站守路怪：玩家从 D(1,1) 必须打穿
+    x=3 的守路怪才靠近得了王座口 (6,6)。王座台在 x5~7 / y3~6，竖墙选
+    x=3 / x=9 完全避开，不破坏 v0.10「红门封唯一入口」结构。
+    """
     g = blank_grid()
     g[1][1] = 'D'
     # 王座台：W 在 (6,4)，上/左/右封墙，正面 (6,5) 放魔王
@@ -521,6 +768,21 @@ def make_boss_floor(rng):
     g[wy + 1][wx] = '3'   # 魔王 (6,5) 把守正面
     # v0.10：红门封王座唯一入口 (6,6)，左右 (5,5)/(7,5) 砌墙防止绕过门去打魔王
     g[5][5] = '#'; g[5][7] = '#'; g[6][6] = door_char(BOSS_FLOOR)
+
+    # v0.15 竖闸墙：整列贯通只留 1 格缺口 = 真割点，缺口站守路怪
+    boss_walls = []
+    for col, gy in ((3, 2), (9, 11)):
+        for y in range(1, H - 1):
+            if y == gy: continue
+            if g[y][col] == '.':
+                g[y][col] = '#'
+                boss_walls.append((col, y))
+        g[gy][col] = guard_pool(BOSS_FLOOR)[0]
+    assert flood_ok(g), '21F 竖闸墙后 flood fill 不连通'
+    # 左侧带（x=1~2）是进层区，不砌隔间短墙，避免把补给通道切碎
+    add_corridors(g, rng, BOSS_FLOOR, False,
+                  avoid={(x, y) for x in (1, 2) for y in range(1, H - 1)})
+
     pool = [(x, y) for y in range(1, H - 1) for x in range(1, W - 1)
             if g[y][x] == '.' and (x, y) not in
             {(1, 1), (2, 1), (1, 2), (6, 4), (6, 3), (5, 4), (7, 4), (6, 5),
@@ -529,17 +791,18 @@ def make_boss_floor(rng):
     # 顶层补强化道具，确保爬到时能破魔王防 + 扛住
     for c in ('s', 'a', 'S', 'd', 'P', 'P', 'a', 's'):
         x, y = pool.pop(); g[y][x] = c
-    for c in ('1', '2', '1'):
+    # v0.15：散怪 3 -> 6，配合竖闸墙让终局层也不空荡
+    for c in ('1', '2', '1', '2', '4', '1'):
         x, y = pool.pop(); g[y][x] = c
     for k in 'ybr':
         x, y = pool.pop(); g[y][x] = k
     # 暗格（门已改由结构放置，不再随机撒）
     x, y = pool.pop(); g[y][x] = 'H'
-    # v0.12：顶层也留一处暗门（王座台附近的墙都在保护集里，会自动新砌内墙）
-    sec = add_secret(g, rng, BOSS_FLOOR, False)
+    # v0.12：顶层也留一处暗门；v0.15 排除竖闸墙，避免显形后多出第二个缺口
+    sec = add_secret(g, rng, BOSS_FLOOR, False, extra_forbid=boss_walls)
     assert sec, '顶层未能放置暗门'
     assert flood_ok(g), '顶层 flood fill 不连通'
-    return g, [(x, y) for y in range(H) for x in range(W) if g[y][x] == 'H'], sec
+    return g, [(x, y) for y in range(H) for x in range(W) if g[y][x] == 'H'], sec, [], []
 
 
 def make_floor(floor_no):
@@ -549,6 +812,7 @@ def make_floor(floor_no):
     g = blank_grid()
     if floor_no == 1:
         g[1][1] = '@'
+        g[2][1] = FAIRY_CH   # v0.16：出生点正下方，常驻小精灵（candidate_pool 已保护该格）
     else:
         g[1][1] = 'D'
     g[13][11] = 'U'
@@ -561,14 +825,19 @@ def make_floor(floor_no):
     # v0.14：强敌宝库趁地图空白最大时先占位；后续隔间墙只挑 '.'，自动避开它。
     #       新砌的墙传给 add_secret，避免暗门显形后形成绕过精英怪的第二个入口。
     vault_walls, vault_avoid = [], set()
+    vault_cells = []
     if floor_no in ELITE_FLOORS:
         v = add_vault(g, rng, floor_no, has_room)
         assert v, f'{floor_no}F 未能放置强敌宝库'
         vault_walls, vault_avoid = v[2], {v[3]}
+        vault_cells = list(v[2]) + list(v[1]) + [v[0], v[3]]
 
-    # v0.14：成体系的 3~4 格隔间墙（取代原来 5 段 2 格短墙），做出走廊纵深；
-    #       房间层与开放层都加，逐段 flood_ok 兜底，失败即回退。
-    add_corridors(g, rng, floor_no, has_room)
+    # v0.15：先立走廊骨架（要求干净的整行贯通），再砌支路凹室，最后补隔间短墙。
+    # 顺序不能反 —— add_corridors 的随机短墙会破坏「整行除缺口外全是墙」的
+    # 割点前提；凹室也要抢在短墙之前，才能找到三面可砌的干净空地。
+    gates = gate_skeleton(g, rng, floor_no, has_room, vault_cells)
+    alcoves = add_alcoves(g, rng, floor_no, has_room, vault_cells, gates)
+    add_corridors(g, rng, floor_no, has_room, avoid=start_region(g, gates))
 
     # v0.10：门放在「唯一入口」，从此不可绕行 —— 房间口 / 上楼口
     if has_room:
@@ -592,7 +861,9 @@ def make_floor(floor_no):
             g[gate[1]][gate[0]] = og
         assert placed, f'{floor_no}F 上楼口无法封成唯一入口'
 
-    hidden = place_entities(g, rng, floor_no, has_room, inner, None, avoid=vault_avoid)
+    hidden = place_entities(g, rng, floor_no, has_room, inner, None,
+                            avoid=vault_avoid, gates=gates, alcoves=alcoves,
+                            start_cells=start_region(g, gates))
 
     # 飞行器兜底：11F 若因故不是房间层，仍保证全塔恰好一个 F
     if floor_no == FLY_FLOOR:
@@ -603,18 +874,26 @@ def make_floor(floor_no):
     # 图鉴只由 6F 房间 kind='codex' 产生，全塔唯一
 
     # v0.12：每层 1 处暗门（撞墙显形的支线奖励），最后放，避免占用实体候选池
-    sec = add_secret(g, rng, floor_no, has_room, extra_forbid=vault_walls)
+    alcove_walls = [w for a in alcoves for w in a['walls']]
+    guard_coords = list(gates) + [a['entry'] for a in alcoves]
+    sec = add_secret(g, rng, floor_no, has_room,
+                     extra_forbid=vault_walls + alcove_walls + guard_coords,
+                     forbid_rows={y for _, y in gates})
     assert sec, f'{floor_no}F 未能放置暗门'
     assert flood_ok(g), f'{floor_no}F flood fill 不连通'
-    return g, hidden, sec
+    return g, hidden, sec, gates, alcoves
 
 
 def build():
     floors = []
     hidden_cfg = []
     secret_cfg = []
+    gates_by_floor = []
+    alcoves_by_floor = []
     for n in range(1, 22):
-        g, hs, sec = make_floor(n)
+        g, hs, sec, gates, alcoves = make_floor(n)
+        gates_by_floor.append(gates)
+        alcoves_by_floor.append(alcoves)
         rows = [''.join(row) for row in g]
         f = {
             'name': f'{n}F',
@@ -663,6 +942,11 @@ def build():
         {'id': 'npc_elder', 'ch': 'E', 'name': '被困的老者', 'effect': {'flag': 2, 'bomb': 1}},
         {'id': 'quest_lockpick', 'ch': 'j', 'name': '锁匠工具', 'effect': {'flag': 4}},
         {'id': 'quest_moneybag', 'ch': 'q', 'name': '钱袋', 'effect': {'flag': 8}},
+        # v0.16：能量核心（13F 房间，全塔唯一）—— effect.flag=128 写 CORE_HELD；
+        # 小精灵是常驻 NPC，不放 effect（resolveStep 单独三态分支），但必须进
+        # ITEMS 表，solver.scan() 才会在「持核心且未强化」时把它列为目标。
+        {'id': 'core_energy', 'ch': CORE_CH, 'name': '能量核心', 'effect': {'flag': 128}},
+        {'id': 'npc_fairy', 'ch': FAIRY_CH, 'name': '塔灵小精灵', 'effect': {}},
     ]
     # v0.9：8 种怪。基础数值只作「未缩放」兜底，运行时由 FLOOR_SCALE[层] × 权重派生。
     # 经典魔塔怪种分工：石头人高防低血（破防博弈）、法师/警卫真实伤害（无视防御）。
@@ -690,7 +974,18 @@ def build():
         # 权重在「超前层标准怪」之上再加权，与守宝收益（铁剑 + 铁盾）难度对等。
         {'id': 'm9', 'ch': ELITE_CH, 'name': '宝库守卫', 'hp': 120, 'atk': 30, 'def': 20,
          'gold': 60, 'exp': 45, 'bg': '#ef6c00',
-         'hpW': 3.0, 'atkW': 1.35, 'defW': 1.6,
+        # v0.15：玩家因怪数 5->9 拿到更多金币/经验，属性提前追上强敌，
+        # 14F/18F 的 X 在「首次进层」就能被打赢，故把 atkW 1.35->1.7、
+        # defW 1.6->2.2（精英单独加权，不动普通怪 FLOOR_SCALE 摊薄）。
+        # v0.16：怪数 9->12 + 全塔损血 ×1.3 + 精灵大幅强化，玩家属性进一步
+        # 上涨；且 17F 屏障后玩家必须回头强化才会「首次」抵达 18F，此时
+        # ATK266/DEF291/HP3612 已逼近终局 ATK303/DEF338/HP3392，旧权重下
+        # 18F X 首次即可打。按同一口径再校准 atkW 1.7->1.6、defW 2.2->3.8，
+        # 使 4 处首次进层全部打不过（3F/9F/14F 破不了防、18F 会阵亡），
+        # 终局回头仍全部可打（损血 0/322/780/1456 HP，梯度递增）。
+        # 用户明确「强敌除外」：solver.scan 排除 elite 目标与守卫中的宝库道具，
+        # 故调权重不影响正式回放路线，只影响玩家手动挑战时的判定。
+        'hpW': 3.0, 'atkW': 1.6, 'defW': 3.8,
          'scaleShift': ELITE_SHIFT, 'elite': True},
         # 魔王：独立终局数值，不参与逐层缩放（经典魔塔 Boss 惯例）；通关即终局，经验无意义
         {'id': 'm3', 'ch': '3', 'name': '魔王', 'hp': BOSS_FINAL['hp'],
@@ -702,7 +997,7 @@ def build():
         'y': '钥', 'b': '钥', 'r': '钥',
         'p': '+', 'P': '++', 'a': '攻', 'd': '防', 's': '剑', 'S': '盾', 'g': '金',
         'F': '飞', 'o': '炸', 'I': '鉴', 'M': '法', 'T': '盗', 'H': '',
-        'E': '老', 'j': '具', 'q': '袋', 'X': '卫',
+        'E': '老', 'j': '具', 'q': '袋', 'X': '卫', 'e': '灵', 'C': '核',
         'U': '↑', 'D': '↓', 'W': '王', 'N': '商',
     }
     tile_color = {
@@ -714,21 +1009,36 @@ def build():
         's': '#cfd8dc', 'S': '#90a4ae', 'g': '#ffca28',
         'F': '#4dd0e1', 'o': '#546e7a', 'I': '#ba68c8', 'M': '#7e57c2', 'T': '#8d6e63',
         'E': '#bcaaa4', 'j': '#b0bec5', 'q': '#ffca28', 'X': '#ff7043',
+        'e': '#66e0c8', 'C': '#8c7bff',
         'H': '#1b2430', 'U': '#66bb6a', 'D': '#8d6e63', 'W': '#ab47bc', 'N': '#26c6da',
     }
     # v0.9：主题接线（拼进 name，HUD / 图鉴 / 载入日志直接可见）
     for f in floors:
         f['name'] = f['name'] + ' · ' + f['theme']
     # v0.9：分层怪种投放（只换字符，不动连通性 / 楼梯 / 房内宝物）
-    retier_monsters(floors)
+    # v0.15：所有「几何割点怪」都必须保持常规怪种 —— 瓶颈守路怪、凹室守护怪，
+    #   以及随机散怪恰好落在唯一通道上的那些。割点 = 把它设成墙后 (1,1)->U
+    #   不可达。若这类怪被 retier 换成 m6 石头人(defW1.7 破防尖峰) 或
+    #   m5/m8 pierce 真实伤害怪，进层打不过就会把主路切断成死局。
+    #   非割点的支线怪仍照常分层替换，保证高层出现 5/6/7/8 的图鉴口径。
+    cut_by_floor = []
+    for f in floors:
+        rows = f['rows']
+        mons = [(x, y) for y in range(1, H - 1) for x in range(1, W - 1)
+                if rows[y][x] in '1245678']
+        cut_by_floor.append({(x, y) for x, y in mons
+                             if not _reach(rows, (1, 1), (11, 13), {(x, y)})})
+    skip_by_floor = [set(gates_by_floor[i]) | {a['entry'] for a in alcoves_by_floor[i]}
+                     | cut_by_floor[i] for i in range(21)]
+    retier_monsters(floors, skip_by_floor)
     # v0.9：逐层强度曲线，按每层实际怪数摊薄目标损血
     mob_cnt = count_mobs(floors)
     floor_scale = build_floor_scale(mob_cnt)
 
     data = {
         'meta': {
-            'schema': 6,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + FLOOR_SCALE 外推供 scaleShift）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 7,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},
@@ -746,6 +1056,17 @@ def build():
         'hidden': hidden_cfg,
         'secret': secret_cfg,
         'floorScale': floor_scale,
+        # v0.16：屏障配置（floor/coreFloor/fairyFloor 均为 0-based 楼层索引）。
+        # boost 只作用于「屏障层起、非 elite」的常规怪；未强化时 calcBattle 再
+        # 强制 unbreakable（能量护盾），强化后护盾解除、靠 charge 的强化属性打
+        # 这个数值台阶。强化幅度与倍率都是可调参数，实测校准见开发盘点 0-N。
+        'barrier': {
+            'floor': BARRIER_FLOOR - 1,
+            'coreFloor': CORE_FLOOR - 1,
+            'fairyFloor': 0,
+            'boost': BARRIER_BOOST,
+            'charge': FAIRY_CHARGE,
+        },
     }
     with open(os.path.join(ROOT, 'levels', 'levels.json'), 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -769,6 +1090,9 @@ def build():
         if 'N' in joined: special.append('商人N')
         print(f"  {i+1:2d}F {f['theme']:6s} {room:5s} 实体{entities:2d} " + ' '.join(special))
     tx = sum(''.join(f['rows']).count(ELITE_CH) for f in floors)
+    print('v0.15 走廊闸墙瓶颈:', sum(len(g) for g in gates_by_floor), '处（每层',
+          min(len(g) for g in gates_by_floor), '~', max(len(g) for g in gates_by_floor),
+          '道）| 支路凹室:', sum(len(a) for a in alcoves_by_floor), '处')
     print('强敌宝库 X 处数:', tx, '（应为', len(ELITE_FLOORS), '，分布', sorted(ELITE_FLOORS), 'F）')
     print('FLOOR_SCALE 组数:', len(floor_scale), '（21 逐层 +', ELITE_SHIFT, '外推，供 scaleShift）')
     empty = sum(''.join(f['rows']).count('.') for f in floors)

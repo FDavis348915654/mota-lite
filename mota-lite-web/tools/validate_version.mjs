@@ -255,9 +255,20 @@ ok('browser_check.mjs 有打字机期间坐标恒定专项',
 const c131 = CHANGELOG.find(c => c.v === 'v0.13.1')
 ok('CHANGELOG 有 v0.13.1 且说明界面伸缩 / 误选',
   !!c131 && c131.note.includes('界面伸缩') && c131.note.includes('误选'))
-ok('CHANGELOG 首条为 v0.14.0 且说明关卡设计深度 / 强敌 / scaleShift',
-  CHANGELOG[0].v === 'v0.14.0' && CHANGELOG[0].note.includes('关卡设计深度') &&
-  CHANGELOG[0].note.includes('强敌') && CHANGELOG[0].note.includes('scaleShift'))
+// v0.15 成为首条，v0.14 / v0.13.1 记录改为「存在该条目」（同 v0.13.0 的处理）
+ok('CHANGELOG 有 v0.14.0 且说明关卡设计深度 / 强敌 / scaleShift',
+  (() => { const c = CHANGELOG.find(x => x.v === 'v0.14.0')
+           return !!c && c.note.includes('关卡设计深度') && c.note.includes('强敌') &&
+                  c.note.includes('scaleShift') })())
+// v0.16 成为首条，v0.15 记录改为「存在该条目」（同 v0.14 / v0.13.0 的处理）
+ok('CHANGELOG 有 v0.15.0 且说明走廊 / 瓶颈 / 清层节奏',
+  (() => { const c = CHANGELOG.find(x => x.v === 'v0.15.0')
+           return !!c && c.note.includes('窄走廊') && c.note.includes('守路怪') &&
+                  c.note.includes('不打怪不能上楼') && c.note.includes('强敌') })())
+ok('CHANGELOG 首条为 v0.16.0 且说明小精灵 / 能量核心 / 护盾 / 交互等待',
+  CHANGELOG[0].v === 'v0.16.0' && CHANGELOG[0].note.includes('小精灵') &&
+  CHANGELOG[0].note.includes('能量核心') && CHANGELOG[0].note.includes('能量护盾') &&
+  CHANGELOG[0].note.includes('交互等待'))
 
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
@@ -278,4 +289,54 @@ ok('gen_assets.py 有 elite 帧与 X 映射',
   read('tools/gen_assets.py').includes("'X': 'elite'"))
 ok('browser_check.mjs 有 v0.14 端到端专项',
   browserCheck.includes('v0.14 强敌'))
+
+// ---- v0.15 关卡节奏（走廊 + 瓶颈守路）：静态防漂移 ----
+ok('make_levels.py 有闸墙 / 凹室 / 第一带 / 守路怪池',
+  genPy.includes('def gate_skeleton') && genPy.includes('def add_alcoves') &&
+  genPy.includes('def start_region') && genPy.includes('def guard_pool') &&
+  genPy.includes('GATE_TARGET'))
+ok('make_levels.py 闸墙起始行 >= y4 且强敌加权已校准（v0.16 atkW1.6/defW3.8）',
+  genPy.includes('range(4, 12)') &&
+  genPy.includes("'atkW': 1.6") && genPy.includes("'defW': 3.8"))
+ok('solver.js 强敌纯支线 + 保护阈值放大（v0.16 含精灵往返 6000/1400）',
+  read('solver.js').includes('!mon.elite') &&
+  read('solver.js').includes('guarded.has(key)') &&
+  read('solver.js').includes('MAX_STEPS = 6000') &&
+  read('solver.js').includes('rounds > 1400'))
+ok('texts.js 帮助文案说明走廊 / 守路怪 / 清层节奏',
+  read('texts.js').includes('守路怪') && read('texts.js').includes('杀完一层的怪'))
+ok('browser_check.mjs 有 v0.15 走廊拦路端到端专项',
+  browserCheck.includes('v0.15 走廊'))
+
+// ---- v0.16 小精灵 / 能量核心 / 能量护盾 / 交互等待：静态防漂移 ----
+ok('make_levels.py 有 v0.16 常量（精灵 e / 核心 C / 17F 屏障 / 怪数 12 / 损血×1.3 / schema 7）',
+  genPy.includes("FAIRY_CH = 'e'") && genPy.includes("CORE_CH = 'C'") &&
+  genPy.includes('BARRIER_FLOOR = 17') && genPy.includes('TARGET_MOBS = 12') &&
+  genPy.includes('lossMul=1.3') && genPy.includes("'schema': 7"))
+ok('levels.json 有 barrier 表且 build_tables.py 导出 BARRIER',
+  read('tools/build_tables.py').includes("('BARRIER',") &&
+  read('tables.js').includes('export const BARRIER'))
+ok('logic.js 有 flags 扩位 / 能量护盾 / 精灵三态分支',
+  read('logic.js').includes('CORE_HELD: 128') &&
+  read('logic.js').includes('FAY_CHARGED: 256') &&
+  read('logic.js').includes("reason: 'shield'") &&
+  read('logic.js').includes('flags > 511') &&
+  read('logic.js').includes("if (t === 'e')"))
+ok('solver.js 有精灵回头往返 + 保护阈值 6000/1400',
+  read('solver.js').includes('backForFairy') &&
+  read('solver.js').includes('BARRIER.floor') &&
+  read('solver.js').includes('MAX_STEPS = 6000') &&
+  read('solver.js').includes('rounds > 1400'))
+ok('app.js 有「走到实体旁等一拍」交互（AUTO_STEP_MS / interactTimer）与精灵剧情',
+  app.includes('AUTO_STEP_MS = 150') && app.includes('interactTimer') &&
+  app.includes('}, AUTO_STEP_MS)') && app.includes("queueStory('fairy_charge')"))
+ok('texts.js 有 v0.16 四段剧情 / 17F 护盾 / 帮助说明',
+  read('texts.js').includes('fairy_intro') && read('texts.js').includes('core_hint') &&
+  read('texts.js').includes('fairy_charge') && read('texts.js').includes('能量护盾'))
+ok('gen_assets.py 有 fairy / core 两帧与 e/C 映射',
+  read('tools/gen_assets.py').includes('draw_fairy') &&
+  read('tools/gen_assets.py').includes('draw_core') &&
+  read('tools/gen_assets.py').includes("'e': 'fairy'"))
+ok('browser_check.mjs 有 v0.16 小精灵端到端专项',
+  browserCheck.includes('v0.16 小精灵'))
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

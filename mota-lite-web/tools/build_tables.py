@@ -24,7 +24,7 @@ SRC = os.path.join(ROOT, 'levels', 'levels.json')
 DST = os.path.join(ROOT, 'tables.js')
 
 REQUIRED = ('tileColor', 'tileChar', 'monsters', 'items', 'floors', 'hero0',
-            'doorKey', 'doorCost', 'hidden', 'secret', 'floorScale')
+            'doorKey', 'doorCost', 'hidden', 'secret', 'floorScale', 'barrier')
 
 
 def js(value, indent=0):
@@ -72,6 +72,7 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // I  怪物图鉴(全塔唯一，拾取后解锁图鉴界面)
 // M  被困的法师   T  被困的盗贼   E  被困的老者   N  商人(商店)
 // j  锁匠工具(13F)   q  钱袋(19F)   —— 盗贼任务线两件交付道具
+// e  塔灵小精灵(1F 出生点旁常驻 NPC)   C  能量核心(13F 房间，全塔唯一)
 // 1-8  怪物(字符 -> MONSTERS)   X  宝库守卫(精英怪，强度超前 9 层，守墙围宝库)
 // U  上楼  D  下楼  W  通关(王座)
 //
@@ -84,6 +85,9 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // v0.14：关卡设计深度 —— 隔间墙 + 加密实体 + 4 处强敌守宝库(3/9/14/18F)；
 //   MONSTERS 加精英怪 X(scaleShift/elite)；FLOOR_SCALE 扩到 30 组（21 逐层 + 9 外推，
 //   供 scaledMon 的 scaleShift 取「超前层」数值，见 logic.js）；meta.schema 升 6。
+// v0.15：走廊闸墙 / 单格瓶颈守路怪 / 支路凹室资源把守。
+// v0.16：1F 小精灵 e + 13F 能量核心 C + BARRIER（17F 起数值台阶与能量护盾）；
+//   怪数 12、全塔目标损血 ×1.3；schema 升 7。
 """
 
 FOOTER = """
@@ -112,6 +116,7 @@ SECTIONS = [
     ('HIDDEN',     'hidden',    '隐藏暗格：坐标 -> 奖励 + 文本框 key'),
     ('SECRET',     'secret',    '暗门：坐标 -> 墙后奖励 + 文本框 key（撞墙显形）'),
     ('FLOOR_SCALE','floorScale','逐层怪物标准数值（hp/atk/def），运行时按层派生实际数值'),
+    ('BARRIER',    'barrier',   'v0.16 屏障：卡关层 / 核心层 / 精灵层 / 数值台阶倍率 / 精灵强化幅度'),
 ]
 
 

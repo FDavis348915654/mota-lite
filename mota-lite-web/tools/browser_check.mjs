@@ -463,9 +463,22 @@ try {
   await accept('#btnRestart')
   check('重开回到 newGame', (await hud()) === HUD0, await hud())
 
-  // 隐藏暗格：点配置表里的 H 坐标，走过去触发
+  // 隐藏暗格：v0.15 起 1F 的 H 被三道闸墙的守路怪隔在后带，正是「先清层再拿支线资源」节奏；
+  // 开局裸属性直点会提示不可达。故先导入「已清完 1F 怪」的存档（怪格索引运行期从 tables.js
+  // 现算、不写死坐标），关掉重开后可能残留的序章弹层，再点 H 走过去触发奖励与对应剧情。
+  const HID_SAVE = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js');
+    const W=t.FLOORS[0].rows[0].length, rows=t.FLOORS[0].rows;
+    const monCh=new Set(t.MONSTERS.map(m=>m.ch));
+    const s=l.newGame(); s.opened[0]={};
+    for(let y=0;y<rows.length;y++) for(let x=0;x<W;x++)
+      if(monCh.has(rows[y][x])) s.opened[0][y*W+x]='.';
+    return l.serialize(s);
+  })()`)
+  await setVal('#saveInput', HID_SAVE); await accept('#btnImport')
+  await closeStory()
   await cellClick(MAP.hidden.idx)
-  const hid = await waitFor("document.querySelector('#tip').textContent.includes('发现隐藏的')", 10000)
+  const hid = await waitFor("document.querySelector('#tip').textContent.includes('发现隐藏的')", 15000)
   check('走到隐藏暗格触发奖励', hid, await txt('#tip'))
   check('隐藏发现弹出对应剧情', (await hidden('#storyLayer')) === false && (await txt('#storyTitle')).includes('暗格'), await txt('#storyTitle'))
   await closeStory()
@@ -1229,6 +1242,330 @@ try {
     "(async()=>{const t=await import('./texts.js');return ['floor_3f','floor_9f','floor_14f','floor_18f'].every(k=>t.TEXTS.story[k] && /宝库|守卫/.test(t.TEXTS.story[k].body))})()"))
   check('v0.14 强敌：m9 图鉴描述与 elite_hint 引导齐全', await ev(
     "(async()=>{const t=await import('./texts.js');return !!t.TEXTS.monsterDesc.m9 && !!t.TEXTS.story.elite_hint && /超前|变强/.test(t.TEXTS.monsterDesc.m9)})()"))
+
+  // ---- v0.15 走廊 + 瓶颈守路专项端到端 ----
+  // 用户诉求「基本没有怪物拦路、可以毫无阻碍进入后一层」的回归护栏。
+  // 坐标与判端全部运行期从 tables.js / logic.js / solver.js 现算（沿用本文件「不写死坐标」原则）；
+  // 口径先由 /tmp/v15_bc_probe.mjs 离线实测成立，再固化成下面的断言。
+  const V15 = await ev(`(async()=>{
+    const t = await import('./tables.js'), l = await import('./logic.js'), sv = await import('./solver.js');
+    const W = t.FLOORS[0].rows[0].length, H = t.FLOORS[0].rows.length;
+    const monCh = new Set(t.MONSTERS.map(m=>m.ch));
+    const WALL = '#A';
+    // geo: 只把 #/A 当墙；noFight: 怪也当墙（门/道具/钥匙仍可走）；默认: 仅纯地板可走
+    const walkable = (ch,mode)=>{
+      if(WALL.includes(ch)) return false;
+      if(mode==='geo') return true;
+      if(mode==='noFight') return !monCh.has(ch);
+      return 'UD@.'.includes(ch);
+    };
+    const bfs = (rows,mode,start,goal,blocked)=>{
+      const eb = new Set(blocked||[]);
+      const q=[start], seen=new Set([start[0]+','+start[1]]);
+      while(q.length){
+        const cur=q.shift();
+        if(cur[0]===goal[0]&&cur[1]===goal[1]) return true;
+        for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const nx=cur[0]+d[0], ny=cur[1]+d[1], k=nx+','+ny;
+          if(nx<0||ny<0||nx>=W||ny>=H||seen.has(k)||eb.has(k)) continue;
+          if(!walkable(rows[ny][nx],mode)) continue;
+          seen.add(k); q.push([nx,ny]);
+        }
+      }
+      return false;
+    };
+    const START=[1,1], GOAL=[11,13], GUARD=new Set(['1','2','4','7']);
+    const floors = t.FLOORS.map((f,fi)=>{
+      const rows=f.rows, gates=[];
+      // 横贯闸墙：x=1..W-2 除唯一缺口外全砌 '#'，缺口站守路怪
+      for(let y=2;y<H-1;y++){
+        let walls=0; const gaps=[];
+        for(let x=1;x<W-1;x++){
+          const c=rows[y][x];
+          if(c==='#') walls++;
+          else if(c!=='A') gaps.push({x:x,y:y,c:c});
+        }
+        if(gaps.length===1 && walls===(W-2)-1 && monCh.has(gaps[0].c)){
+          gates.push({x:gaps[0].x,y:y,c:gaps[0].c,
+            cut:!bfs(rows,'geo',START,GOAL,[gaps[0].x+','+gaps[0].y])});
+        }
+      }
+      // 支路凹室：资源格被 3 面墙围住、第 4 面是守护怪
+      let alcoves=0;
+      for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+        if(!'adPg'.includes(rows[y][x])) continue;
+        const nb=[[1,0],[-1,0],[0,1],[0,-1]].map(d=>rows[y+d[1]][x+d[0]]);
+        if(nb.filter(n=>n==='#').length===3 && nb.filter(n=>monCh.has(n)).length===1) alcoves++;
+      }
+      const mons=[];
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(monCh.has(rows[y][x])) mons.push({x:x,y:y});
+      const cuts=mons.filter(m=>!bfs(rows,'geo',START,GOAL,[m.x+','+m.y]));
+      const noFight=bfs(rows,'noFight',START,GOAL);
+      const xs=[];
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(rows[y][x]==='X') xs.push(x+','+y);
+      const xSide=xs.length?bfs(rows,'geo',START,GOAL,xs):null;
+      const firstKeys=[];
+      for(let y=0;y<=3;y++) for(let x=0;x<W;x++){
+        const it=t.itemByCh(rows[y][x]);
+        if(it && /^key_/.test(it.id)) firstKeys.push(it.id);
+      }
+      const dot=rows.join('').split('').filter(c=>c==='.').length;
+      return {f:fi,gateCount:gates.length,cutGates:gates.filter(g=>g.cut).length,
+        guardOk:gates.every(g=>GUARD.has(g.c)),
+        alcoves:alcoves,mons:mons.length,cuts:cuts.length,noFight:noFight,
+        xs:xs.length,xSide:xSide,firstKeys:firstKeys,dot:dot};
+    });
+    // 21F 王座层用竖闸墙（x=3 / x=9），不与横闸墙同口径
+    const b=t.FLOORS[20].rows, vcols=[];
+    for(let x=1;x<W-1;x++){
+      let walls=0; const gaps=[];
+      for(let y=1;y<H-1;y++){
+        const c=b[y][x];
+        if(c==='#') walls++;
+        else if(c!=='A') gaps.push({x:x,y:y,c:c});
+      }
+      if(walls>=H-5 && gaps.some(g=>monCh.has(g.c))) vcols.push({x:x,walls:walls,gaps:gaps.length});
+    }
+    const s0=l.newGame();
+    const clickU=sv.findPath(s0,new Set(['11,13']),{blockEntities:true}).path;
+    const sol=sv.findSolution();
+    return {
+      floors:floors, vcols:vcols,
+      totalGates:floors.reduce((n,f)=>n+f.gateCount,0),
+      cutGates:floors.reduce((n,f)=>n+f.cutGates,0),
+      totalAlcoves:floors.reduce((n,f)=>n+f.alcoves,0),
+      totalCuts:floors.reduce((n,f)=>n+f.cuts,0),
+      totalX:floors.reduce((n,f)=>n+f.xs,0),
+      dotRatio:floors.reduce((n,f)=>n+f.dot,0)/(t.FLOORS.length*W*H),
+      guardOk:floors.every(f=>f.guardOk),
+      clickU:clickU?clickU.length:null,
+      solved:!!sol, steps:sol?sol.steps.length:0, rounds:sol?sol.rounds:0,
+      ended:sol?sol.state.ended:null
+    };
+  })()`)
+  check('v0.15 走廊：1F~20F 每层至少 1 道横贯闸墙（只留单格缺口）',
+    V15.floors.slice(0,20).every(f=>f.gateCount>=1),
+    V15.floors.slice(0,20).map(f=>(f.f+1)+'F:'+f.gateCount).join(' '))
+  check('v0.15 走廊：38 道闸墙缺口全部是几何割点（堵住即上不了楼）',
+    V15.totalGates===38 && V15.cutGates===38,
+    '闸墙'+V15.totalGates+' / 割点'+V15.cutGates)
+  check('v0.15 走廊：守路怪只用常规怪种 1/2/4/7（不掺强敌 / 破防 / 真伤）', V15.guardOk)
+  check('v0.15 走廊：21 层全部「不打怪不能上楼」',
+    V15.floors.every(f=>!f.noFight),
+    V15.floors.filter(f=>f.noFight).length ? V15.floors.filter(f=>f.noFight).map(f=>(f.f+1)+'F').join(',') : '无')
+  // v0.16 怪数 9->12，几何必打怪由 77 增到 88；改为「只增不减」口径
+  check('v0.15 走廊：每层至少 1 只几何必打怪（v0.16 加怪后数量只增不减）',
+    V15.floors.every(f=>f.cuts>=1) && V15.totalCuts>=77,
+    '必打怪'+V15.totalCuts+' / 单层最少'+Math.min.apply(null,V15.floors.map(f=>f.cuts)))
+  check('v0.15 走廊：32 处支路凹室资源由守护怪把守',
+    V15.totalAlcoves===32, String(V15.totalAlcoves))
+  check('v0.15 走廊：1F 三色钥匙都在第一带 y<=3（开局先捡道具的建模前提）',
+    new Set(V15.floors[0].firstKeys).size===3, V15.floors[0].firstKeys.join('/'))
+  check('v0.15 走廊：4 处强敌 X 全为纯支线（堵住 X 仍可上楼）',
+    V15.totalX===4 && V15.floors.every(f=>f.xs===0 || f.xSide===true),
+    'X'+V15.totalX+' / 挡主路'+V15.floors.filter(f=>f.xs>0 && f.xSide!==true).map(f=>(f.f+1)+'F').join(',') || '无')
+  check('v0.15 走廊：21F 王座层两道竖闸墙（缺口站守路怪、不再空荡）',
+    V15.vcols.length===2 && V15.vcols.every(v=>v.walls>=10), JSON.stringify(V15.vcols))
+  check('v0.15 走廊：空地占比降到 45% 以下（地图不再开阔）',
+    V15.dotRatio<0.45, (V15.dotRatio*100).toFixed(1)+'%')
+  check('v0.15 走廊：点击模式开局直指上楼格不可达（守路怪当墙）',
+    V15.clickU===null, String(V15.clickU))
+  check('v0.15 走廊：solver 仍可通关（约 2200 步 / 500 轮）',
+    V15.solved && V15.ended==='win' && V15.steps>=2000 && V15.steps<=4000 && V15.rounds<=900,
+    V15.steps+' 步 / '+V15.rounds+' 轮 / '+V15.ended)
+
+  // 真实点击：干净 1F 开局直接点上楼格 U —— 守路怪挡路，应提示不可达。
+  // 这是用户「不能毫无阻碍进入后一层」诉求的端到端验证（U 坐标运行期推导，不写死）。
+  const U15 = await ev(`(async()=>{const t=await import('./tables.js');const W=t.FLOORS[0].rows[0].length;const rows=t.FLOORS[0].rows;for(let y=0;y<rows.length;y++)for(let x=0;x<W;x++)if(rows[y][x]==='U')return {x:x,y:y,idx:y*W+x};return null})()`)
+  await setVal('#saveInput', '4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0'); await accept('#btnImport')
+  await closeStory()
+  await ev("document.querySelector('#log').textContent = ''")
+  await cellClick(U15.idx)
+  const blocked15 = await waitFor("document.querySelector('#log').textContent.includes('不可达')", 10000)
+  check('v0.15 走廊：真实点击上楼格被守路怪拦下（提示不可达）', blocked15, await txt('#log'))
+
+  // 真实 DOM：帮助弹层文案与 1F 闸墙行渲染
+  const helpRule15 = await ev("document.querySelector('#helpRule').textContent")
+  check('v0.15 走廊：帮助弹层渲染出闸墙 / 守路怪 / 清层节奏 / 强敌纯支线',
+    /横贯的闸墙/.test(helpRule15) && /守路怪/.test(helpRule15) &&
+    /杀完一层的怪/.test(helpRule15) && /纯支线/.test(helpRule15))
+  const gateRow15 = await ev(`(async()=>{
+    const t=await import('./tables.js');
+    const rows=t.FLOORS[0].rows, W=rows[0].length;
+    const cells=[...document.querySelectorAll('.cell')];
+    for(let y=2;y<rows.length-1;y++){
+      const idxs=[];
+      for(let x=1;x<W-1;x++) if(rows[y][x]==='#') idxs.push(y*W+x);
+      if(idxs.length>=W-3) return {y:y,walls:idxs.length,slots:cells.length,
+        rendered:idxs.every(i=>!!cells[i] && cells[i].dataset.i===String(i))};
+    }
+    return null;
+  })()`)
+  check('v0.15 走廊：1F 横贯闸墙行在 195 个真实 DOM 槽位中一一对应渲染',
+    !!gateRow15 && gateRow15.walls>=10 && gateRow15.slots===195 && gateRow15.rendered,
+    JSON.stringify(gateRow15))
+
+  // ---- v0.16 小精灵 / 能量核心 / 能量护盾 / 交互等待 专项端到端 ----
+  // 判端全部运行期从 tables.js / logic.js / solver.js / texts.js 现算，不写死坐标与数值。
+  const V16 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
+    const W=t.FLOORS[0].rows[0].length;
+    const all=t.FLOORS.flatMap(f=>f.rows).join('');
+    const findCh=(f,ch)=>{for(let y=0;y<t.FLOORS[f].rows.length;y++){const x=t.FLOORS[f].rows[y].indexOf(ch);if(x>=0)return{x,y}}return null};
+    const fairyPos=findCh(0,'e'), corePos=findCh(t.BARRIER.coreFloor,'C');
+    const m1=t.MONSTERS.find(m=>m.ch==='1');
+    const fake=l.newGame(); fake.floor=t.BARRIER.floor;
+    fake.hero.hp=999999; fake.hero.atk=99999; fake.hero.def=99999; fake.hero.flags=0;
+    const shield=l.calcBattle(fake.hero,m1,t.BARRIER.floor);
+    fake.hero.flags=l.FLAG.FAY_CHARGED;
+    const after=l.calcBattle(fake.hero,m1,t.BARRIER.floor);
+    const s16=l.scaledMon(m1,t.BARRIER.floor-1), s17=l.scaledMon(m1,t.BARRIER.floor);
+    const sol=sv.findSolution();
+    let s=l.newGame(); const seq=[s.floor];
+    if(sol) for(const d of sol.steps){const bf=s.floor; s=l.resolveStep(s,d).state; if(s.floor!==bf) seq.push(s.floor)};
+    const peak=seq.indexOf(t.BARRIER.floor);
+    const back=seq.findIndex((v,i)=>i>peak&&v===0);
+    const up=seq.findIndex((v,i)=>i>back&&back>=0&&v===t.BARRIER.floor);
+    const atlas=await (await fetch('./assets/sprites.json')).json();
+    return {
+      barrier:t.BARRIER, fairyPos, corePos,
+      fairyCount:(all.match(/e/g)||[]).length, coreCount:(all.match(/C/g)||[]).length,
+      coreSameRoom:t.FLOORS[t.BARRIER.coreFloor].rows.slice(4,8).some(r=>r.includes('j')) &&
+                   t.FLOORS[t.BARRIER.coreFloor].rows.slice(4,8).some(r=>r.includes('C')),
+      mobCounts:t.FLOORS.map(f=>f.rows.join('').split('').filter(c=>'1245678'.includes(c)).length),
+      firstLoss:t.FLOOR_SCALE[0].targetLoss,
+      shieldReason:shield.reason, chargedOk:after.ok,
+      stepUp:s17.hp>s16.hp&&s17.atk>s16.atk&&s17.def>s16.def,
+      solOk:!!sol&&sol.state.ended==='win', solSteps:sol?sol.steps.length:0, solRounds:sol?sol.rounds:0,
+      peak, back, up,
+      buildTile:l.buildCells(l.newGame())[2*W+1].tile,
+      tileE:atlas.tileMap.e, tileC:atlas.tileMap.C,
+      frameFairy:!!atlas.frames.fairy, frameCore:!!atlas.frames.core,
+      charge:t.BARRIER.charge
+    };
+  })()`)
+  check('v0.16 小精灵：BARRIER 配置 = 17F 起 / 核心 13F / 精灵 1F / boost / charge',
+    V16.barrier.floor===16 && V16.barrier.coreFloor===12 && V16.barrier.fairyFloor===0 &&
+    V16.barrier.boost.hp>1 && V16.charge.atk>0, JSON.stringify(V16.barrier))
+  check('v0.16 小精灵：1F 出生点旁 (1,2) 是 e、全塔唯一、buildCells 透传 tile=e',
+    !!V16.fairyPos && V16.fairyPos.x===1 && V16.fairyPos.y===2 &&
+    V16.fairyCount===1 && V16.buildTile==='e', JSON.stringify(V16.fairyPos))
+  check('v0.16 小精灵：13F 房间能量核心 C 与锁匠工具 j 同房、全塔唯一（通关必经）',
+    V16.coreCount===1 && V16.coreSameRoom, JSON.stringify(V16.corePos))
+  check('v0.16 难度：每层常规怪 12 只（21F 为 8）、首层 targetLoss 上调到 31',
+    V16.mobCounts.slice(0,20).every(n=>n===12) && V16.mobCounts[20]===8 && V16.firstLoss===31,
+    V16.mobCounts.slice(0,3).join('/') + ' … 21F=' + V16.mobCounts[20] + ' / loss=' + V16.firstLoss)
+  check('v0.16 难度：17F 起常规怪 hp/atk/def 明显上台阶', V16.stepUp)
+  check('v0.16 护盾：未强化 17F 怪判 shield，堆到 99999 攻防也绕不过',
+    V16.shieldReason==='shield', V16.shieldReason)
+  check('v0.16 护盾：强化后护盾解除、可打', V16.chargedOk)
+  check('v0.16 护盾：findSolution 通关且回放真实展示 17F→1F→17F 往返',
+    V16.solOk && V16.peak>=0 && V16.back>V16.peak && V16.up>V16.back,
+    V16.solSteps + ' 步 / ' + V16.solRounds + ' 轮 / peak=' + V16.peak + ' back=' + V16.back + ' up=' + V16.up)
+  check('v0.16 小精灵：资源表 e→fairy / C→core 且两个独立像素帧存在',
+    V16.tileE==='fairy' && V16.tileC==='core' && V16.frameFairy && V16.frameCore)
+
+  // 交互等待：用页面内 MutationObserver + performance.now() 记录 #tip 变化时刻，
+  // 不受 CDP 往返延迟影响。相邻点击应 ~0ms；走过去应是「1 步移动 150ms + 等待一拍 150ms」≈300ms。
+  const probe16 = () => ev(`(()=>{
+    const el=document.querySelector('#tip');
+    if(window.__v16Obs) window.__v16Obs.disconnect();
+    window.__v16Tip=[];
+    window.__v16Obs=new MutationObserver(()=>window.__v16Tip.push({t:performance.now(),text:el.textContent}));
+    window.__v16Obs.observe(el,{childList:true,subtree:true,characterData:true});
+    window.__v16T0=performance.now();
+    return true;
+  })()`)
+  const tipTimes16 = () => ev("window.__v16Tip.filter(x=>x.text.includes('小精灵')).map(x=>Math.round(x.t-window.__v16T0))")
+
+  // A) 本来就站在物体旁边：点击立即交互
+  await setVal('#saveInput','4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0'); await accept('#btnImport')
+  await closeStory()
+  await probe16()
+  await cellClick(2*13+1)
+  const adj16 = await waitFor("window.__v16Tip.some(x=>x.text.includes('小精灵'))", 3000)
+  const adjT16 = await tipTimes16()
+  check('v0.16 交互等待：本来就站在物体旁，点击立即交互（< 100ms）',
+    adj16 && adjT16.length>0 && adjT16[0]<100, JSON.stringify(adjT16))
+  await closeStory()
+
+  // B) 远处实体：英雄在 (2,1)，点 (1,2) 精灵，寻路 1 步到 (2,2) 后再等一拍
+  await setVal('#saveInput','4|0,2,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0'); await accept('#btnImport')
+  await closeStory()
+  await probe16()
+  await cellClick(2*13+1)
+  const far16 = await waitFor("window.__v16Tip.some(x=>x.text.includes('小精灵'))", 5000)
+  const farT16 = await tipTimes16()
+  check('v0.16 交互等待：走到物体旁后等一拍（≈2×150ms）才交互，不再「还有一格就结算」',
+    far16 && farT16.length>0 && farT16[0]>=240 && farT16[0]<1500, JSON.stringify(farT16))
+  await closeStory()
+
+  // C) 持能量核心撞小精灵：一次性大幅强化 + 弹「塔灵灌顶」剧情
+  await setVal('#saveInput','4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,128||0'); await accept('#btnImport')
+  await closeStory()
+  const atkB16 = await ev("document.getElementById('hudAtk').textContent")
+  await cellClick(2*13+1)
+  const charged16 = await waitFor("document.querySelector('#tip').textContent.includes('能量核心')", 3000)
+  const atkA16 = await ev("document.getElementById('hudAtk').textContent")
+  check('v0.16 小精灵：持核心撞它一次性大幅强化（攻击 +' + V16.charge.atk + '）',
+    charged16 && Number(atkA16.slice(1))-Number(atkB16.slice(1))===V16.charge.atk,
+    atkB16 + ' -> ' + atkA16)
+  check('v0.16 小精灵：强化弹「塔灵灌顶」剧情',
+    (await hidden('#storyLayer'))===false && (await txt('#storyTitle')).includes('塔灵灌顶'), await txt('#storyTitle'))
+  await closeStory()
+
+  // D) 已强化后撞小精灵：只闲聊、属性不变
+  await setVal('#saveInput','4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,256||0'); await accept('#btnImport')
+  await closeStory()
+  const atkIdleB16 = await ev("document.getElementById('hudAtk').textContent")
+  await cellClick(2*13+1)
+  const idle16 = await waitFor("document.querySelector('#tip').textContent.includes('护盾已经散了')", 3000)
+  const atkIdleA16 = await ev("document.getElementById('hudAtk').textContent")
+  check('v0.16 小精灵：已强化后撞它只闲聊、属性不变',
+    idle16 && atkIdleA16===atkIdleB16, atkIdleB16 + ' -> ' + atkIdleA16)
+  await closeStory()
+
+  // E) 17F 护盾端到端：高属性但未强化，撞怪仍被拦下
+  const SHIELD16 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js');
+    const f=t.BARRIER.floor, rows=t.FLOORS[f].rows, W=rows[0].length;
+    const monCh=new Set(t.MONSTERS.map(m=>m.ch));
+    for(let y=1;y<rows.length-1;y++)for(let x=1;x<W-1;x++){
+      if(!monCh.has(rows[y][x])) continue;
+      for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]){
+        const sx=x+dx, sy=y+dy, c=rows[sy][sx];
+        if(c==='.'||c==='@'){
+          const s=l.newGame(); s.floor=f; s.x=sx; s.y=sy;
+          s.hero.hp=99999; s.hero.atk=99999; s.hero.def=99999; s.hero.flags=0;
+          return {save:l.serialize(s), idx:y*W+x};
+        }
+      }
+    }
+    return null;
+  })()`)
+  check('v0.16 护盾：17F 找到「怪 + 相邻可站格」场景', !!SHIELD16, JSON.stringify(SHIELD16))
+  if (SHIELD16) {
+    await setVal('#saveInput', SHIELD16.save); await accept('#btnImport')
+    await closeStory()
+    await cellClick(SHIELD16.idx)
+    const shielded16 = await waitFor("document.querySelector('#tip').textContent.includes('能量护盾挡住了攻击')", 3000)
+    check('v0.16 护盾：17F 高属性未强化撞怪仍被拦下（堆攻防无效）', shielded16, await txt('#tip'))
+    await closeStory()
+  }
+
+  // F) 文案：4 段剧情 + 17F 护盾提示 + 帮助 / 图鉴 / 交互等待说明
+  const TX16 = await ev(`(async()=>{const t=await import('./texts.js');return {
+    intro:!!t.TEXTS.story.fairy_intro, core:!!t.TEXTS.story.core_hint,
+    charge:!!t.TEXTS.story.fairy_charge, done:!!t.TEXTS.story.fairy_done,
+    f17:t.TEXTS.story.floor_17f.body, help:t.TEXTS.help.rule,
+    itemC:t.TEXTS.itemDesc.core_energy, itemE:t.TEXTS.itemDesc.npc_fairy,
+    wait:t.TEXTS.help.controls
+  }})()`)
+  check('v0.16 小精灵：4 段剧情 + 17F 护盾提示 + 帮助/图鉴/交互等待文案齐全',
+    TX16.intro && TX16.core && TX16.charge && TX16.done &&
+    /能量护盾/.test(TX16.f17) && /能量护盾/.test(TX16.help) &&
+    /能量核心/.test(TX16.itemC) && /小精灵/.test(TX16.itemE) &&
+    /等一小会儿/.test(TX16.wait), JSON.stringify({ intro:TX16.intro, core:TX16.core, charge:TX16.charge, done:TX16.done }))
 
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {

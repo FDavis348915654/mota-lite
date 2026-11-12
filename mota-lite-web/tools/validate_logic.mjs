@@ -8,7 +8,7 @@
 
 import {
   FLOORS, MONSTERS, ITEMS, HIDDEN, SECRET, DOOR_KEY, DOOR_COST,
-  TILE_COLOR, TILE_CHAR, HERO0, FLOOR_SCALE,
+  TILE_COLOR, TILE_CHAR, HERO0, FLOOR_SCALE, BARRIER,
   monsterByCh, itemByCh, itemById, hiddenAt, secretAt
 } from '../tables.js'
 import {
@@ -526,7 +526,7 @@ console.log('\n=== 7. buildCells / 存档 ===')
   ok('v4 已探索段含非法楼层判坏档',
     deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,0||0.99') === null)
   ok('book > 1 判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,2,0,0||0') === null)
-  ok('flags > 127 判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,128||0') === null)
+  ok('flags > 511 判坏档', deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,512||0') === null)
 
   // 最坏存档（21 层通关态，v4 实测约 1.1KB）
   const worst = sol ? serialize(sol.state) : text
@@ -547,7 +547,7 @@ console.log('\n=== 7. buildCells / 存档 ===')
     backWin ? backWin.hero.exp + ' EXP / flags=' + backWin.hero.flags : 'null')
 
   const TOP_SAVE = FLOORS.length - 1
-  // 炸弹仍可持有多个；flags 位字段上限 127
+  // 炸弹仍可持有多个；v0.16 flags 位字段扩到 9 位，上限 511
   const manyBomb = '4|' + TOP_SAVE + ',3,4,999,50,50,0,0,0,0,2,1,15,1,0,0||' + TOP_SAVE
   ok('bomb 为持有数量（>1 合法）', !!deserialize(manyBomb) && deserialize(manyBomb).hero.bomb === 15)
   ok('fly 历史大值仍可读（上限 99）',
@@ -640,8 +640,13 @@ console.log('\n=== 9. v0.10 门机制 / 设置持久化 ===')
   const U = { x: 11, y: 13 }, s0 = newGame()
   ok('点击模式：门后的上楼格不可达', findPath(s0, new Set([U.x + ',' + U.y]), { blockEntities: true }).path === null)
   const withKey = newGame(); withKey.hero.keys[DOOR_KEY[gate0.c]] = DOOR_COST[gate0.c] || 1
-  ok('有钥匙也不能穿门（必须主动点开）', findPath(withKey, new Set([U.x + ',' + U.y]), { blockEntities: true }).path === null)
-  ok('solver 模式有钥匙可规划穿门（攻略不受影响）', findPath(withKey, new Set([U.x + ',' + U.y])).path !== null)
+  // v0.15：1F 主路由瓶颈守路怪封锁，裸属性 calcBattle 打不过 -> findPath 把怪
+  // 当墙，连门都走不到。这两项只验「门本身在点击模式不可穿越 / solver 模式可规划」，
+  // 须排除「打不过怪」的干扰，故用足以清主路的属性做基准状态（等价于玩家捡完
+  // 第一带补给后的真实状态）。否则 null 是怪造成的，不是门造成的，断言失真。
+  const doorProbe = { ...withKey, hero: { ...withKey.hero, hp: 99999, atk: 999, def: 999 } }
+  ok('有钥匙也不能穿门（必须主动点开）', findPath(doorProbe, new Set([U.x + ',' + U.y]), { blockEntities: true }).path === null)
+  ok('solver 模式有钥匙可规划穿门（攻略不受影响）', findPath(doorProbe, new Set([U.x + ',' + U.y])).path !== null)
   const stand = [['down', 0, 1, 'up'], ['up', 0, -1, 'down'], ['left', -1, 0, 'right'], ['right', 1, 0, 'left']]
     .map(([d, dx, dy, back]) => ({ x: gate0.x + dx, y: gate0.y + dy, dir: back }))
     .find(p => { const ch = tileAt(withKey, p.x, p.y); return ch !== '#' && !isEntityTile(ch) })
@@ -731,7 +736,9 @@ console.log('\n=== 10. v0.11 交互停原地（经典魔塔「撞一下」）===
     ok('v0.11 再走一步才进入原怪格', r2.state.x === mg.x && r2.state.y === mg.y)
   }
   // 10.2 道具 / NPC：同样停原地
-  const ig = scene(ch => !!itemByCh(ch))
+  // v0.16：排除常驻 NPC（小精灵 e / 法师 M / 盗贼 T / 商人 N）—— 它们撞上去
+  // 不清格、不发「获得/已救出」+save，不属于 v0.11「拾取道具停原地」的口径。
+  const ig = scene(ch => !!itemByCh(ch) && !'eMTN'.includes(ch))
   ok('1F 找到道具场景', !!ig)
   if (ig) {
     const r = resolveStep(strong(ig.sx, ig.sy), ig.dir)
@@ -993,5 +1000,70 @@ ok('楼梯 U/D 不可被 findPath 当作通路穿过', (() => {
   }
   return checked >= 15
 })())
+console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
+{
+  const B = BARRIER
+  ok('BARRIER 配置：屏障 17F / 核心 13F / 精灵 1F / boost / charge',
+    B && B.floor === 16 && B.coreFloor === 12 && B.fairyFloor === 0 &&
+    B.boost.hp > 1 && B.charge.atk > 0)
+  ok('flags 新增 CORE_HELD=128 / FAY_CHARGED=256',
+    FLAG.CORE_HELD === 128 && FLAG.FAY_CHARGED === 256)
+  ok('deserialize 接受 flags=256（新位）',
+    !!deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,256||0'))
+  ok('deserialize 拒绝 flags=512（超 9 位上限）',
+    deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,512||0') === null)
+  const m1 = MONSTERS.find(m => m.ch === '1')
+  const fake = newGame(); fake.floor = B.floor
+  fake.hero.hp = 999999; fake.hero.atk = 99999; fake.hero.def = 99999; fake.hero.flags = 0
+  ok('未强化 17F 常规怪判 shield（堆 99999 攻防也绕不过）',
+    calcBattle(fake.hero, m1, B.floor).reason === 'shield')
+  ok('16F（屏障前）不受护盾', calcBattle(fake.hero, m1, B.floor - 1).reason !== 'shield')
+  fake.hero.flags = FLAG.FAY_CHARGED
+  ok('强化后护盾解除、可打', calcBattle(fake.hero, m1, B.floor).ok)
+  const elite = MONSTERS.find(m => m.ch === 'X')
+  ok('17F 起常规怪数值上台阶，elite 不叠加 boost（保持 v0.14 语义）',
+    scaledMon(m1, B.floor).hp > scaledMon(m1, B.floor - 1).hp &&
+    scaledMon(elite, B.floor).hp ===
+      Math.round(FLOOR_SCALE[B.floor + elite.scaleShift].hp * elite.hpW))
+  ok('1F (1,2) 是小精灵 e 且 ITEMS 有 npc_fairy',
+    tileAt(newGame(), 1, 2) === 'e' && !!itemByCh('e'))
+  let f0 = newGame()
+  let r = resolveStep(f0, 'down')
+  ok('未持核心撞 e：讲背景、flags 不变、格保留、停原地',
+    r.state.hero.flags === 0 && r.state.x === 1 && r.state.y === 1 &&
+    tileAt(r.state, 1, 2) === 'e' &&
+    r.events.some(e => e.t === 'msg' && /能量护盾/.test(e.text)))
+  f0 = newGame(); f0.hero.flags = FLAG.CORE_HELD
+  r = resolveStep(f0, 'down')
+  ok('持核心撞 e：消耗核心 + 置 FAY_CHARGED + 幅度 = BARRIER.charge',
+    !(r.state.hero.flags & FLAG.CORE_HELD) && !!(r.state.hero.flags & FLAG.FAY_CHARGED) &&
+    r.state.hero.atk === HERO0.atk + B.charge.atk &&
+    r.state.hero.def === HERO0.def + B.charge.def &&
+    r.state.hero.hp === HERO0.hp + B.charge.hp)
+  f0 = newGame(); f0.hero.flags = FLAG.FAY_CHARGED
+  r = resolveStep(f0, 'down')
+  ok('已强化撞 e：闲聊、属性不变、格保留',
+    r.state.hero.atk === HERO0.atk && tileAt(r.state, 1, 2) === 'e' &&
+    r.events.some(e => e.t === 'msg' && /护盾已经散/.test(e.text)))
+  const rowsC = FLOORS[B.coreFloor].rows
+  let cp = null
+  rowsC.forEach((row, y) => { const x = row.indexOf('C'); if (x >= 0) cp = { x, y } })
+  ok('13F 房间有唯一能量核心 C 且与锁匠工具 j 同房（通关必经）',
+    !!cp && rowsC.slice(4, 8).some(row => row.includes('j')) &&
+    FLOORS.flatMap(f => f.rows).join('').split('C').length - 1 === 1 &&
+    FLOORS.flatMap(f => f.rows).join('').split('e').length - 1 === 1)
+  const fc = newGame(); fc.floor = B.coreFloor; fc.x = cp.x - 1; fc.y = cp.y
+  r = resolveStep(fc, 'right')
+  ok('拾取 C 置 CORE_HELD 并把该格清成地板',
+    !!(r.state.hero.flags & FLAG.CORE_HELD) && tileAt(r.state, cp.x, cp.y) === '.')
+  const sol16 = findSolution()
+  ok('findSolution 通关、完成精灵强化且核心已消耗',
+    !!sol16 && sol16.state.ended === 'win' &&
+    !!(sol16.hero.flags & FLAG.FAY_CHARGED) && !(sol16.hero.flags & FLAG.CORE_HELD))
+  ok('每层常规怪 12 只（21F 为 8）、首层 targetLoss 上调到 31',
+    FLOORS.slice(0, 20).every(f =>
+      f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12) &&
+    FLOOR_SCALE[0].targetLoss === 31)
+}
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

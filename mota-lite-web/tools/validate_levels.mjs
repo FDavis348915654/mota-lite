@@ -193,7 +193,7 @@ console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封�
 const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
 const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
 const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
-ok('meta.schema 升到 6', data.meta.schema === 6, String(data.meta.schema))
+ok('meta.schema 升到 7（v0.16 屏障配置）', data.meta.schema === 7, String(data.meta.schema))
 ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
   floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
 ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
@@ -290,5 +290,31 @@ ok('每处暗门 A 至少有一个真正可走的邻格（非墙非实体）',
       return c && WALK_CH.includes(c)
     })
   }))
+// ---- v0.16 小精灵 / 能量核心 / 屏障配置 ----
+ok('meta.schema = 7 且 levels.json 有 barrier 段',
+  data.meta.schema === 7 && !!data.barrier)
+ok('barrier 配置：floor=16 / coreFloor=12 / fairyFloor=0 / boost / charge',
+  data.barrier.floor === 16 && data.barrier.coreFloor === 12 && data.barrier.fairyFloor === 0 &&
+  data.barrier.boost.hp > 1 && data.barrier.charge.atk > 0)
+ok('tileColor / tileChar 覆盖 e 与 C',
+  !!data.tileColor.e && !!data.tileColor.C &&
+  data.tileChar.e === '灵' && data.tileChar.C === '核')
+ok('ITEMS 有 core_energy(flag=128) / npc_fairy',
+  data.items.some(i => i.id === 'core_energy' && i.ch === 'C' && i.effect.flag === 128) &&
+  data.items.some(i => i.id === 'npc_fairy' && i.ch === 'e'))
+ok('1F (1,2) 是小精灵 e、13F 房间有 C、全塔 e/C 各唯一',
+  data.floors[0].rows[2][1] === 'e' &&
+  data.floors[12].rows.some(r => r.includes('C')) &&
+  data.floors.flatMap(f => f.rows).join('').split('e').length - 1 === 1 &&
+  data.floors.flatMap(f => f.rows).join('').split('C').length - 1 === 1)
+ok('13F 房间 j 与 C 同房（能量核心通关必经）',
+  data.floors[12].rows.slice(4, 8).some(r => r.includes('j')) &&
+  data.floors[12].rows.slice(4, 8).some(r => r.includes('C')))
+ok('每层常规怪 12 只（21F 为 8）、全塔损血上调（首层 targetLoss=31）',
+  data.floorScale[0].targetLoss === 31 &&
+  data.floors.slice(0, 20).every(f =>
+    f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12))
+ok('tables.js 导出 BARRIER 且与 JSON 逐项一致',
+  JSON.stringify(t.BARRIER) === JSON.stringify(data.barrier))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

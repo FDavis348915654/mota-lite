@@ -50,7 +50,9 @@ let playTimer = null, speed = 320, backup = null
 let atlas = null, spriteMode = true, animOn = true, soundOn = true
 let animating = false
 // v0.6.0：点击格子移动 / 设置浮层状态
-let autoQueue = [], autoTimer = null, suppressGridClick = false, settingsOpen = false
+// v0.16：点击寻路每步间隔 = 「移动一格的时间」；走到实体旁后等同样一拍再交互
+const AUTO_STEP_MS = 150
+let autoQueue = [], autoTimer = null, interactTimer = null, suppressGridClick = false, settingsOpen = false
 // v0.8：点实体时「走完路径后要补的一次交互」，以及图鉴浮层开关
 let pendingInteract = null, codexOpen = false
 // 通用二次确认弹窗：confirmOpen 期间所有游戏输入让位
@@ -513,7 +515,7 @@ function pickSfx(events, beforeTile, battleWon) {
   if (t.includes('阵亡')) return 'lose'
   if (battleWon) return 'battle'
   if (t.includes('门已打开') || t.includes('进入 ')) return 'door'
-  if (t.includes('获得 ')) return ['F', 'o', 's', 'S', 'a', 'd'].includes(beforeTile) ? 'powerup' : 'pickup'
+  if (t.includes('获得 ')) return ['F', 'o', 's', 'S', 'a', 'd', 'C'].includes(beforeTile) ? 'powerup' : 'pickup'
   if (t.includes('缺少') || t.includes('前方是墙') || t.includes('攻击不足') || t.includes('硬拼')) return 'click'
   return 'step'
 }
@@ -623,6 +625,16 @@ function step(dir) {
     // v0.14：首次撞到宝库守卫（此时必被 calcBattle 拦下）弹一次引导，
     // 说明「破不了防 / 会阵亡」是暂时打不过，变强后回来打取宝。
     if (beforeTile === 'X' && progressed) queueStory('elite_hint')
+    // v0.16 小精灵 e（1F 常驻）：按交互前后的强化状态选剧情；
+    // 能量核心 C 拾取后提示「带回 1F 找小精灵」。
+    if (beforeTile === 'e' && progressed) {
+      const nowCharged = !!(state.hero.flags & FLAG.FAY_CHARGED)
+      const justCharged = nowCharged && !(before.hero.flags & FLAG.FAY_CHARGED)
+      if (justCharged) queueStory('fairy_charge')
+      else if (nowCharged) queueStory('fairy_done')
+      else queueStory('fairy_intro')
+    }
+    if (beforeTile === 'C' && progressed) queueStory('core_hint')
     if (beforeTile === 'N' && progressed) openShop()
     if (beforeTile === 'M' && progressed) {
       if (mageFreedBefore) openMage()
@@ -845,6 +857,9 @@ function manualStep(dir) {
 //     没开门前点门后的格子会提示不可达，不会自动绕门或穿门。
 function stopAuto() {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null }
+  // v0.16：取消尚未触发的「到达实体旁后延迟交互」，避免剧情打断 / 重开 /
+  // 改点别的格子之后残留一个过期交互。
+  if (interactTimer) { clearTimeout(interactTimer); interactTimer = null }
   autoQueue = []
   pendingInteract = null
 }
@@ -899,7 +914,7 @@ function walkTo(tx, ty) {
   }
   autoQueue = r.path.slice()
   pendingInteract = entity ? { x: tx, y: ty } : null
-  autoTimer = setInterval(autoTick, 150)
+  autoTimer = setInterval(autoTick, AUTO_STEP_MS)
 }
 function autoTick() {
   if (state.ended || replayMode || settingsOpen || codexOpen) { stopAuto(); return }
@@ -917,7 +932,14 @@ function autoTick() {
   if (!autoQueue.length && pendingInteract) {
     const p = pendingInteract
     stopAuto()
-    interact(p.x, p.y)
+    // v0.16：走到实体旁边后先等「一拍」（= 移动一格的时间）再交互，
+    // 让玩家看到英雄在旁边站稳，而不是「还有一格就开始结算」。
+    // 本来就相邻的情况在 walkTo() 的相邻分支里立即交互，不会进这里。
+    interactTimer = setTimeout(() => {
+      interactTimer = null
+      if (state.ended || storyOpen || animating || settingsOpen || confirmOpen || codexOpen || replayMode) return
+      interact(p.x, p.y)
+    }, AUTO_STEP_MS)
   }
 }
 function applyImport(s, text) {

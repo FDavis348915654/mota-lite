@@ -5,7 +5,7 @@
   "rows": 6,
   "width": 224,
   "height": 168,
-  "count": 44,
+  "count": 46,
   "frames": {
     "wall": {
       "x": 0,
@@ -253,20 +253,32 @@
       "w": 28,
       "h": 28
     },
-    "fx_hit": {
+    "fairy": {
       "x": 28,
       "y": 140,
       "w": 28,
       "h": 28
     },
-    "fx_boom": {
+    "core": {
       "x": 56,
       "y": 140,
       "w": 28,
       "h": 28
     },
-    "fx_pick": {
+    "fx_hit": {
       "x": 84,
+      "y": 140,
+      "w": 28,
+      "h": 28
+    },
+    "fx_boom": {
+      "x": 112,
+      "y": 140,
+      "w": 28,
+      "h": 28
+    },
+    "fx_pick": {
+      "x": 140,
       "y": 140,
       "w": 28,
       "h": 28
@@ -313,6 +325,8 @@
     "j": "lockpick",
     "q": "moneybag",
     "Z": "door_seal",
-    "X": "elite"
+    "X": "elite",
+    "e": "fairy",
+    "C": "core"
   }
 }

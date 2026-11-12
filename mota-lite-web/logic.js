@@ -36,7 +36,7 @@
 //   存档升 v4：head 追加 exp 与 flags 两个字段（16 字段），v1~v3 旧档作废重开。
 
 import {
-  FLOORS, HERO0, TILE_COLOR, TILE_CHAR, DOOR_KEY, DOOR_COST, FLOOR_SCALE,
+  FLOORS, HERO0, TILE_COLOR, TILE_CHAR, DOOR_KEY, DOOR_COST, FLOOR_SCALE, BARRIER,
   monsterByCh, itemByCh, itemById, hiddenAt, secretAt
 } from './tables.js'
 
@@ -55,11 +55,17 @@ export function scaledMon(mon, floor) {
   )
   const s = (FLOOR_SCALE && FLOOR_SCALE[idx]) || null
   if (!s) return mon
+  // v0.16：屏障层起「常规怪」数值上一个台阶（HP/ATK/DEF 各乘 BARRIER.boost）。
+  // 精英 X 保持 v0.14 的超前层语义，不叠加倍率，避免 4 处强敌宝库口径漂移；
+  // 魔王 noScale 已在函数开头返回。玩家强化后靠 charge 的属性打这个台阶。
+  const fl = floor == null ? 0 : floor
+  const mul = (BARRIER && fl >= BARRIER.floor && !mon.elite)
+    ? BARRIER.boost : { hp: 1, atk: 1, def: 1 }
   return {
     ...mon,
-    hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW))),
-    atk: Math.max(1, Math.round(s.atk * (mon.atkW == null ? 1 : mon.atkW))),
-    def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW)))
+    hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp)),
+    atk: Math.max(1, Math.round(s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk)),
+    def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW) * mul.def))
   }
 }
 
@@ -87,7 +93,9 @@ export const FLAG = {
   BOMB_UNLOCK: 2,     // 救出老者 E -> 炸弹按钮 / 商店炸弹项解锁
   LOCKPICK: 4,        // 持有锁匠工具 j（盗贼任务一）
   MONEYBAG: 8,        // 持有钱袋 q（盗贼任务二）
-  MAGE_FREED: 16      // 法师 M 已救出（此后撞 M 打开经验兑换而非再给奖励）
+  MAGE_FREED: 16,     // 法师 M 已救出（此后撞 M 打开经验兑换而非再给奖励）
+  CORE_HELD: 128,     // v0.16 持有能量核心 C（13F 房间，全塔唯一）
+  FAY_CHARGED: 256    // v0.16 已回 1F 找小精灵完成强化（能量护盾解除）
 }
 // 盗贼任务阶段存 flags 的 bit5-6：0 被困 / 1 已救（等锁匠工具）/ 2 已开门（等钱袋）/ 3 已离塔
 export function thiefStage(hero) { return ((hero.flags || 0) >> 5) & 3 }
@@ -163,6 +171,16 @@ function setTile(s, x, y, ch) {
 // pierce：法师系「真实伤害」，净伤直接取敌攻、无视 DEF（经典魔塔法师机制），
 //         也是打破「堆防即可免疫一切」的关键设计。
 export function calcBattle(hero, mon, floor) {
+  // v0.16 能量护盾（硬门槛）：屏障层起、未强化时，常规怪被能量护盾包裹，
+  // 无论玩家堆多少攻防 / 商店买属性 / 法师兑经验都判「不可破防」。
+  // 唯一解法是回 1F 用「能量核心 + 小精灵」完成强化（FAY_CHARGED 置位）。
+  // 精英 X 与魔王 noScale 不套护盾，保持 v0.14 强敌 / 终局语义。
+  const fl = floor == null ? 0 : floor
+  if (BARRIER && fl >= BARRIER.floor && mon && !mon.elite && !mon.noScale &&
+      !((hero.flags || 0) & FLAG.FAY_CHARGED)) {
+    return { ok: false, reason: 'shield', rounds: 0, hpCost: 0,
+             perHit: 0, monPerHit: 0 }
+  }
   const m = scaledMon(mon, floor == null ? 0 : floor)
   let perHit = hero.atk - m.def
   if (perHit <= 0) {
@@ -186,6 +204,7 @@ export function calcBattle(hero, mon, floor) {
 // 纯计算、不写 state，宿主层与图鉴共用，也可被 node 校验。
 export function battleHint(hero, mon, floor) {
   const r = calcBattle(hero, mon, floor)
+  if (r.reason === 'shield') return { breakAtk: null, nextAtk: null, defGain: 0, shield: true, r }
   if (r.reason === 'unbreakable') return { breakAtk: mon.def + 1 - hero.atk, nextAtk: null, defGain: 0, r }
   const hits = CONFIG.FIRST_STRIKE ? Math.max(0, r.rounds - 1) : r.rounds
   let nextAtk = null
@@ -287,7 +306,9 @@ export function resolveStep(prev, direction) {
     if (!r.ok) {
       const text = r.reason === 'unbreakable'
         ? '攻击不足，无法破防'
-        : '硬拼会阵亡（需 ' + (r.hpCost + 1) + ' HP）'
+        : r.reason === 'shield'
+          ? '能量护盾挡住了攻击——带能量核心回 1F 找小精灵强化'
+          : '硬拼会阵亡（需 ' + (r.hpCost + 1) + ' HP）'
       ev.push({ t: 'msg', text }, { t: 'vibrate' })
       return { state: s, events: ev }
     }
@@ -354,6 +375,27 @@ export function resolveStep(prev, direction) {
       } else {
         ev.push({ t: 'msg', text: '盗贼：19F 房间有我一袋钱，取来咱们两清' })
       }
+    }
+    return { state: s, events: ev }
+  }
+
+  // 3.6 v0.16 小精灵 e（1F 出生点旁常驻 NPC）：三态、可反复撞、英雄停原地、不清格。
+  //   未持核心 -> 讲背景并暗示「带能量核心回来」；持核心且未强化 -> 消耗核心、
+  //   一次性大幅强化（幅度在 BARRIER.charge 配置层，便于探针校准）；已强化 -> 闲聊。
+  if (t === 'e') {
+    const charged = !!(s.hero.flags & FLAG.FAY_CHARGED)
+    const hasCore = !!(s.hero.flags & FLAG.CORE_HELD)
+    if (charged) {
+      ev.push({ t: 'msg', text: '小精灵：护盾已经散了，去塔顶吧' })
+    } else if (hasCore) {
+      const c = (BARRIER && BARRIER.charge) || { atk: 80, def: 60, hp: 1200 }
+      s.hero.atk += c.atk; s.hero.def += c.def; s.hero.hp += c.hp
+      s.hero.flags = (s.hero.flags & ~FLAG.CORE_HELD) | FLAG.FAY_CHARGED
+      ev.push({ t: 'vibrate' }, {
+        t: 'msg', text: '小精灵引动能量核心：攻 +' + c.atk + ' / 防 +' + c.def + ' / 生命 +' + c.hp
+      }, { t: 'save' })
+    } else {
+      ev.push({ t: 'msg', text: '小精灵：塔上层被能量护盾锁着……带一枚能量核心回来找我' })
     }
     return { state: s, events: ev }
   }
@@ -644,8 +686,8 @@ export function deserialize(text) {
   if (n.some(v => !Number.isInteger(v) || v < 0)) return null
   const [floor, x, y, hp, atk, def, gold, ky, kb, kr, e, fly, bomb, book, exp, flags] = n
   // fly 在 v0.8 起语义收敛为 0/1（全塔唯一），上限仍用 99 兼容历史值；
-  // flags 当前用 7 个位（含 thiefStage 两位），上限 127。
-  if (!FLOORS[floor] || e > 2 || fly > 99 || bomb > 99 || book > 1 || flags > 127) return null
+  // v0.16：flags 用 9 个位（含 thiefStage 两位 + 能量核心 / 已强化），上限 511。
+  if (!FLOORS[floor] || e > 2 || fly > 99 || bomb > 99 || book > 1 || flags > 511) return null
   const W = FLOORS[floor].rows[0].length, H = FLOORS[floor].rows.length
   if (x >= W || y >= H) return null
 

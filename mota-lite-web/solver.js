@@ -17,7 +17,7 @@ import {
   newGame, resolveStep, tileAt, calcBattle, isEntityTile, FLAG, thiefStage
 } from './logic.js'
 import {
-  FLOORS, DOOR_KEY, DOOR_COST, monsterByCh, itemByCh
+  FLOORS, DOOR_KEY, DOOR_COST, BARRIER, monsterByCh, itemByCh
 } from './tables.js'
 
 const DIRS = ['up', 'down', 'left', 'right']
@@ -60,9 +60,9 @@ export function findPath(s, targets, opts) {
       if (need && s.hero.keys[need] < (DOOR_COST[ch] || 1)) continue
       // v0.13：封印门 Z 钥匙开不了，只能等盗贼任务线远程撬开；两种模式都不可穿越。
       if (ch === 'Z') continue
-      // v0.13：法师 M / 盗贼 T 救出后常驻（固定 NPC），路径不可穿越、只允许作为目标格
-      // （完成任务时撞上去）；否则路径会反复穿过它们被「撞停」，在原地死循环（r113 震荡根因）。
-      if ((ch === 'M' || ch === 'T') && !targets.has(nx + ',' + ny)) continue
+      // v0.13 / v0.16：法师 M / 盗贼 T / 小精灵 e 都是常驻 NPC，路径不可穿越、
+      // 只允许作为目标格（完成任务时撞上去）；否则会被「撞停」在原地死循环。
+      if ((ch === 'M' || ch === 'T' || ch === 'e') && !targets.has(nx + ',' + ny)) continue
       // 商人不可踩：两种模式都绕开
       if (ch === 'N') continue
       // v0.14：楼梯 U/D 只允许作为终点，不能当普通地板穿过。加密隔间后
@@ -89,6 +89,19 @@ function scan(s) {
   const rows = FLOORS[s.floor].rows
   const W = rows[0].length, H = rows.length
   const g = { win: [], items: [], monsters: [], doors: [], stairs: [] }
+  // v0.15：强敌 X 把守的宝库是纯支线（布局固定：X 上方两格为 s/S 宝物）。
+  // 守卫还在时不把宝库道具列为攻略目标 —— 否则 findPath 会规划出穿过 X 的
+  // 路径，resolveStep 沿途顺手把 X 打掉，造成单层掉血尖峰（14F 实测 -3262HP），
+  // 也违背用户「强敌除外」的清层节奏。守卫被打掉后该格清成地板，宝库道具
+  // 下一轮 scan 自然重新列为目标。用 tileAt(当前状态) 而非静态 FLOORS，才能
+  // 反映「X 已被打掉」。
+  const guarded = new Set()
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (tileAt(s, x, y) === 'X') {
+      guarded.add(x + ',' + (y - 1))
+      guarded.add((x + 1) + ',' + (y - 1))
+    }
+  }
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const ch = tileAt(s, x, y)
@@ -100,6 +113,13 @@ function scan(s) {
         // v0.13 常驻 NPC：法师救过之后是「兑换商」不是清场目标（兑换可选，攻略不用）；
         // 盗贼只在「撞上去能推进任务线」时列为目标，否则会对常驻格反复空撞、死循环。
         if (ch === 'M' && (s.hero.flags & FLAG.MAGE_FREED)) continue
+        if (ch === 'e') {
+          // v0.16：只有「带着能量核心、还没强化」时撞小精灵才有用；
+          // 否则对常驻格反复空撞会让 solver 死循环。
+          const canCharge = (s.hero.flags & FLAG.CORE_HELD) &&
+                            !(s.hero.flags & FLAG.FAY_CHARGED)
+          if (!canCharge) continue
+        }
         if (ch === 'T') {
           const st = thiefStage(s.hero)
           const canAdvance = st === 0 ||
@@ -107,10 +127,15 @@ function scan(s) {
             (st === 2 && (s.hero.flags & FLAG.MONEYBAG))
           if (!canAdvance) continue
         }
-        g.items.push(key)
+        if (!guarded.has(key)) g.items.push(key)
       }
       const mon = monsterByCh(ch)
-      if (mon && calcBattle(s.hero, mon, s.floor).ok) g.monsters.push(key)
+      // v0.15：强敌 X（elite）是「暂时打不过、变强回来打」的纯支线，用户明确
+      // 「强敌除外」—— 不参与「清完一层的怪再上楼」的节奏，攻略不主动清它。
+      // 否则玩家同层内捡完道具属性一涨，X 就从打不过变成可打，solver 会去打
+      // 并造成单层掉血尖峰（14F 实测 -3262HP）。玩家手动点击仍可打：
+      // findPath 对 elite 的通行语义保持不变，宝库道具变强后依旧可达。
+      if (mon && !mon.elite && calcBattle(s.hero, mon, s.floor).ok) g.monsters.push(key)
       const need = DOOR_KEY[ch]
       if (need && s.hero.keys[need] >= (DOOR_COST[ch] || 1)) g.doors.push(key)
       if (ch === 'U') g.stairs.push(key)   // 只规划上楼，避免 D 下楼造成来回震荡
@@ -123,11 +148,13 @@ export function findSolution() {
   let s = newGame()
   const steps = []
   let visited = 0, rounds = 0
-  const MAX_STEPS = 3000   // 21 层 13×15 大地图实测 1432 步，留足余量
+  let backForFairy = false
+  // v0.16：新增「17F 卡关 -> 逐层下楼回 1F 强化 -> 逐层上楼」往返约 +700 步 / +400 轮
+  const MAX_STEPS = 6000
 
   while (!s.ended && steps.length < MAX_STEPS) {
     rounds++
-    if (rounds > 600) return null            // 防策略死循环
+    if (rounds > 1400) return null           // 防策略死循环；v0.16 含精灵跨层往返
 
     // v0.13 盗贼任务线：持有任务道具且盗贼在等交付时，优先逐层下楼回 15F（floor index 14）。
     // stage1（交锁匠工具）是通关硬门槛 —— 16F 封印门 Z 不开就到不了上层；stage2（交钱袋）
@@ -147,6 +174,43 @@ export function findSolution() {
         }
         continue
       }
+    }
+
+    // v0.16 精灵强化往返：到达屏障层（17F）却还没强化时，护盾会把整层常规怪
+    // 判成 unbreakable，主路割点全封死、U 不可达 —— 这就是「卡在某一层过不去」。
+    // 唯一解法是带着 13F 的能量核心逐层下楼回 1F 撞小精灵完成强化。
+    // 与盗贼任务线同一套「targets=['1,1'] 踩 D 换层」跨层往返口径（已验证可靠）。
+    const _core = !!(s.hero.flags & FLAG.CORE_HELD)
+    const _charged = !!(s.hero.flags & FLAG.FAY_CHARGED)
+    if (_charged) backForFairy = false
+    const _needFairy = _core && !_charged &&
+                       (s.floor >= BARRIER.floor || backForFairy)
+    if (_needFairy) {
+      backForFairy = true
+      if (s.floor > BARRIER.fairyFloor) {
+        // 上楼落点恰好是本层 D(1,1)：findPath 的「起点即目标」边界会返回 null，
+        // 先挪开一格，再从邻格走回 D 触发换层（与盗贼往返同一套踩 D 口径）。
+        // 后续各层下楼落点是 U(11,13)，不在 (1,1)，无需这一步。
+        if (s.x === 1 && s.y === 1) {
+          for (const d0 of ['right', 'down', 'left', 'up']) {
+            const r0 = resolveStep(s, d0)
+            if (r0.state.x + ',' + r0.state.y !== '1,1') {
+              s = r0.state; steps.push(d0); break
+            }
+          }
+        }
+        const rd = findPath(s, new Set(['1,1']))
+        if (!rd.path) return null
+        for (const d of rd.path) {
+          const bf = s.floor
+          const rr = resolveStep(s, d)
+          s = rr.state
+          steps.push(d)
+          if (s.ended || s.floor !== bf) break   // 踩到 D 已换层，旧路径作废
+        }
+        continue
+      }
+      // 已回到 1F：落到下面 scan()，由 scan 把小精灵 e 列为目标完成强化
     }
 
     const g = scan(s)
