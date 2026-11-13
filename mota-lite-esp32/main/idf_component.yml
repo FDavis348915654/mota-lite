@@ -1,0 +1,17 @@
+# 组件依赖
+#
+# 刻意不依赖 waveshare/esp32_s3_touch_amoled_2_16 这个 BSP：
+# 它会硬拉 lvgl + libpng + freetype + jpeg + qoi + zlib 一大串图片/字体解码组件，
+# 而本项目自己画 framebuffer，完全用不到 LVGL，那棵树只会拖慢构建、放大体积。
+#
+# 板级初始化（I2C / AXP2101 / QSPI 屏 / 触摸）改为在 board.c 里按 BSP 源码的
+# 官方参数手写，参数来源：waveshareteam/waveshare_boards 的
+# boards/esp32_s3_touch_amoled_2_16/{board_peripherals,board_devices}.yaml
+dependencies:
+  idf: ">=5.4"
+  # 逻辑层：直接跑 mota-lite-web 的 logic.js，零改动
+  espressif/quickjs-ng: "^0.14.0"
+  # 屏：CO5300 QSPI 驱动
+  espressif/esp_lcd_co5300: "^2.2.0"
+  # 触摸：CST9217（CST9220 兼容），微雪适配的驱动
+  waveshare/esp_lcd_touch_cst9217: "^1"

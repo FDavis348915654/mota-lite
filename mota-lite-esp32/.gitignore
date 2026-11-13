@@ -1,0 +1,12 @@
+# ESP-IDF 构建产物与本地配置（可随时重新生成）
+build/
+sdkconfig
+sdkconfig.old
+
+# 组件管理器拉下来的第三方组件
+managed_components/
+dependencies.lock
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -20,6 +20,7 @@
 | `mota-lite-web/levels/levels.json` | 21 层关卡的唯一数据源（含走廊闸墙 / 单格瓶颈守路怪 / 支路凹室 / 强敌宝库 `X` / 暗门 `A` / 铁门 `G` / 封印门 `Z` / 老者 `E` / 任务道具 `j q` / 1F 小精灵 `e` / 13F 能量核心 `C` / `BARRIER` 屏障配置 / SECRET 奖励 / 30 组 FLOOR_SCALE / `meta.curve` 的 `defRatio`·`battleRounds`·`lossGain`·`costMul` 数值参数，`meta.schema=8`） |
 | `mota-lite-web/assets/` | 程序化生成的图集（46 帧，含 `elite` / `fairy` / `core`）与 12 个 8-bit WAV |
 | `mota-lite-web/tools/` | 关卡生成、导表、资源生成、四套离线校验、真实 Chromium 回归 |
+| `mota-lite-esp32/` | **ESP32-S3 移植工程**（微雪 ESP32-S3-Touch-AMOLED-2.16，480×480 QSPI AMOLED + 触摸）。逻辑层经 QuickJS 直接复用 `mota-lite-web/logic.js`，零改动；自绘 framebuffer 渲染，不依赖 LVGL。详见其 `README.md` |
 | `mota-lite/` | 手环端 M1 快应用工程（小米手环 10 / Vela，真机暂缓，**已冻结**） |
 | `mota-lite-skeleton/` | 最早期逻辑骨架留档 |
 | `小米手环10-魔塔Lite开发方案.md` | 移植到小米手环 10（Vela 快应用）的方案文档（附 O 记录 v0.13.0，附 P 记录 v0.13.1，附 Q 记录 v0.14.0，附 R 记录 v0.15.0，附 S 记录 v0.16.0，附 T 记录 v0.17.0） |
