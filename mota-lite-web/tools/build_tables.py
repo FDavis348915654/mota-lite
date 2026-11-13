@@ -62,6 +62,11 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // 设计约定：一律「数组 + id」，不用对象字面量当字典（防同名 key 静默覆盖）；
 // 地图用等宽字符数组编码，一层 = 一个 rows 数组。
 //
+// v0.17 数值口径：FLOOR_SCALE 由 make_levels.py 按「每层首次战斗实测 ATK/DEF」
+// 反解 —— 怪防 = 0.65 × 实测 ATK、战斗 5 回合、每怪损血按 costMul=5.0 标定
+// 后再 ×1.3；m6 石头人是高防低攻挡路怪，主投 2F~16F 的闸墙缺口（主路真割点）。
+// 参数见 levels.json 的 meta.curve，推导与校准实录见《开发盘点》0-O。
+//
 // ---- tile 字符表 ----
 // .  地板        #  墙          @  出生点(仅第 1 层)
 // Y/B/R  黄/蓝/红门  G  铁门(加厚，需 3 把黄钥匙)   A  暗门(视觉同墙，撞开显形)

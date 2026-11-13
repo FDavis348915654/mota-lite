@@ -193,7 +193,7 @@ console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封�
 const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
 const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
 const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
-ok('meta.schema 升到 7（v0.16 屏障配置）', data.meta.schema === 7, String(data.meta.schema))
+ok('meta.schema 升到 8（v0.17 高防曲线 / 挡路怪）', data.meta.schema === 8, String(data.meta.schema))
 ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
   floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
 ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
@@ -291,8 +291,8 @@ ok('每处暗门 A 至少有一个真正可走的邻格（非墙非实体）',
     })
   }))
 // ---- v0.16 小精灵 / 能量核心 / 屏障配置 ----
-ok('meta.schema = 7 且 levels.json 有 barrier 段',
-  data.meta.schema === 7 && !!data.barrier)
+ok('meta.schema = 8 且 levels.json 有 barrier 段',
+  data.meta.schema === 8 && !!data.barrier)
 ok('barrier 配置：floor=16 / coreFloor=12 / fairyFloor=0 / boost / charge',
   data.barrier.floor === 16 && data.barrier.coreFloor === 12 && data.barrier.fairyFloor === 0 &&
   data.barrier.boost.hp > 1 && data.barrier.charge.atk > 0)
@@ -316,5 +316,61 @@ ok('每层常规怪 12 只（21F 为 8）、全塔损血上调（首层 targetLo
     f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12))
 ok('tables.js 导出 BARRIER 且与 JSON 逐项一致',
   JSON.stringify(t.BARRIER) === JSON.stringify(data.barrier))
+
+// ---- v0.17 高防怪 / 破防临界 / 挡路怪 ----
+const CFG17 = data.meta.curve
+ok('meta.curve 有 defRatio=0.65 / battleRounds=5 / lossGain=1.3 / costMul=5.0',
+  CFG17.defRatio === 0.65 && CFG17.battleRounds === 5 &&
+  CFG17.lossGain === 1.3 && CFG17.costMul === 5.0)
+ok('FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=190、逐层不回落',
+  data.floorScale[0].def >= 13 && data.floorScale[20].def >= 190 &&
+  data.floorScale.slice(0, 21).every((s, i, a) => i === 0 || s.def >= a[i - 1].def))
+ok('标准怪 def/怪攻 提升到 0.3~0.6（v0.16 仅 0.14~0.24）',
+  data.floorScale.slice(0, 21).every(s => s.def / s.atk >= 0.28) &&
+  data.floorScale[20].def / data.floorScale[20].atk >= 0.5)
+const wallMon17 = data.monsters.find(m => m.ch === '6')
+ok('m6 石头人高防低攻（defW>=1.2 / atkW<=0.95 / hpW=1.0）',
+  !!wallMon17 && wallMon17.defW >= 1.2 && wallMon17.atkW <= 0.95 && wallMon17.hpW === 1.0)
+ok('常规怪 atkW 收敛到 0.9~1.05（防 (atkW-1)·玩家DEF 放大净伤）',
+  data.monsters.filter(m => !m.elite && !m.pierce && !m.noScale)
+    .every(m => m.atkW >= 0.9 && m.atkW <= 1.05))
+ok('pierce 权重减半（<=0.10，回合 3→5 不放大真实伤害）',
+  data.monsters.filter(m => m.pierce).every(m => m.atkW <= 0.1))
+ok('barrier.boost 收敛为温和台阶（hp1.1/atk1.05/def1.0）',
+  data.barrier.boost.hp === 1.1 && data.barrier.boost.atk === 1.05 &&
+  data.barrier.boost.def === 1.0)
+ok('m9 精英重校 hpW0.8/atkW1.25/defW1.0（终局仍可打）',
+  (() => { const e = data.monsters.find(m => m.ch === 'X')
+    return !!e && e.hpW === 0.8 && e.atkW === 1.25 && e.defW === 1.0 })())
+const cnt6 = f => f.rows.join('').split('6').length - 1
+ok('高防挡路怪只投 2F~16F（1F 与 17F~21F 为 0，中间每层至少 1 只）',
+  cnt6(data.floors[0]) === 0 && data.floors.slice(16).every(f => cnt6(f) === 0) &&
+  data.floors.slice(1, 16).every(f => cnt6(f) >= 1))
+// 主路真割点：把该格当墙后 (1,1) -> (11,13) 不可达
+const WALL17 = '#A'
+function reach17(rows, bx, by) {
+  const seen = new Set(['1,1']), q = [[1, 1]]
+  while (q.length) {
+    const [x, y] = q.pop()
+    if (x === 11 && y === 13) return true
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, k = nx + ',' + ny
+      if (nx < 0 || ny < 0 || nx >= 13 || ny >= 15 || seen.has(k)) continue
+      if (bx === nx && by === ny || WALL17.includes(rows[ny][nx])) continue
+      seen.add(k); q.push([nx, ny])
+    }
+  }
+  return false
+}
+ok('2F~16F 每层至少 1 只 m6 落在主路真割点（堵住即上不去楼）',
+  data.floors.slice(1, 16).every(f => {
+    const rows = f.rows.map(r => r.split(''))
+    for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++)
+      if (rows[y][x] === '6' && !reach17(rows, x, y)) return true
+    return false
+  }))
+ok('tables.js 的 FLOOR_SCALE / MONSTERS 与 JSON 逐项一致',
+  JSON.stringify(t.FLOOR_SCALE) === JSON.stringify(data.floorScale) &&
+  JSON.stringify(t.MONSTERS) === JSON.stringify(data.monsters))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

@@ -85,7 +85,12 @@ FAIRY_CH = 'e'
 CORE_CH = 'C'
 CORE_FLOOR = 13          # 1-based
 BARRIER_FLOOR = 17       # 1-based
-BARRIER_BOOST = {'hp': 1.5, 'atk': 1.25, 'def': 1.45}
+# v0.17：常规怪防已抬到 0.65·玩家实测ATK，且 scaledMon 的 atk 倍率是「乘法
+# 作用在 atk 绝对值」而损血取 (atk - 玩家DEF) 的差值 —— 旧 1.25 会把净伤
+# 放大十几倍（17F 实测 900+HP/只、20 回合）。故收敛为温和台阶：
+# hp 1.1 / atk 1.05 / def 1.0，17F 起每怪损血约为 16F 的 2~3 倍，仍明显
+# 但不死局。护盾硬门槛与强化解除语义完全不变。
+BARRIER_BOOST = {'hp': 1.1, 'atk': 1.05, 'def': 1.0}
 FAIRY_CHARGE = {'atk': 80, 'def': 60, 'hp': 1200}
 
 # 门 / 楼梯 / 房间 / 王座的保护邻域：隔间墙与宝库都不得占用
@@ -164,7 +169,28 @@ CURVE_A = [23, 23, 26, 42, 52, 55, 58, 81, 91, 91, 97, 110, 133, 133,
            136, 149, 162, 162, 178, 191, 191]
 CURVE_D = [20, 43, 46, 56, 76, 92, 95, 103, 113, 126, 132, 135, 155, 178,
            181, 181, 201, 217, 230, 240, 240]
-CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16, lossMul=1.3)
+# v0.17：每层「首次战斗时」玩家真实 ATK / DEF，由 v0.16 正式回放
+# （3355 步 / 242 场战斗）逐场实测。v0.17 不动道具 / 商店 / 法师 / 精灵强化，
+# 玩家属性曲线不变，故这两张表可直接作为反解基准。
+# 旧的 CURVE_A / CURVE_D 是「下一层首次进层」建模值，低层偏差极大
+# （1F 实际 20/20 vs 建模 23/43、3F 实际 26/49 vs 42/56）。v0.16 怪防只有
+# 0.30·pa、rounds=3，偏差被掩盖；v0.17 抬到 0.65·pa 后 perHit 对 ATK 极敏感，
+# 继续用建模值会让 1F 守路怪 perHit=1 / 30 回合 / lethal（实测死局）。
+ACT_A = [20, 23, 26, 26, 45, 58, 64, 67, 103, 103, 106, 125, 138, 151, 151,
+         170, 263, 266, 269, 300, 303]
+ACT_D = [20, 26, 49, 49, 62, 88, 104, 104, 125, 141, 144, 147, 166, 192, 205,
+         205, 278, 304, 310, 325, 338]
+CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16, lossMul=1.3,
+                 # v0.17「高防怪」：常规怪防按【玩家真实 ATK】的比例直接给，
+                 # 不再由 per_hit 反推（v0.16 实际只有约 0.30·pa）。
+                 defRatio=0.65,
+                 # 目标战斗回合：防御抬高后每击变薄，靠多打几回合把损血还回去。
+                 battleRounds=5,
+                 # 每怪损血相对 v0.16 上调 30%（B 硬核口径）。
+                 lossGain=1.3,
+                 # v0.16 实测标定：全塔实际总损血 6558 ≈ sum(targetLoss) 1312 × 5.0。
+                 # 用单一标量把「摊薄基数」换算成真实每怪损血，避免逐层锯齿。
+                 costMul=5.0)
 # v0.16：精灵大幅强化后玩家终局 DEF 约 338，旧 atk=300 会让魔王战零伤
 # （v0.15 为 -110HP）。提到 380 使终局仍有 3×(380-338)=126 左右损血，
 # 保持「难度提高」下 Boss 战不至于毫无压力；裸属性仍破不了魔王的防。
@@ -215,25 +241,39 @@ def count_mobs(floors):
 
 
 def build_floor_scale(cnt):
-    """21 组逐层「标准怪」数值：按每层目标总损血 / 该层怪数摊薄，消除曲线锯齿。"""
+    """21 组逐层「标准怪」数值：按每层目标总损血 / 该层怪数摊薄，消除曲线锯齿。
+
+    v0.17：改成「先定怪防、再反解 HP/ATK」的口径。
+      · 怪防 def = defRatio * pa（pa = 玩家进层建模 ATK），直接修掉 v0.16
+        「防御只有 0.30·pa」的根因；
+      · perHit = pa - def 变薄 -> 回合数由 battleRounds 控制，hp = (R-1)*perHit+1；
+      · 每怪损血 = (R-1)*(atk - pd)，以 v0.16 实测值为基准再乘 lossGain，
+        反解 monPerHit = cost/(R-1)、atk = pd + monPerHit，保证损血只上调
+        lossGain 这一档、不失控放大。
+    注意：不能用 targetLoss/mobs 反解 —— v0.16 的 atk 含 +defGap / atkFloor
+    下限，实际每怪损血是摊薄基数的 2~6 倍，按基数反解会把难度反而调低。
+    """
     c = CURVE_CFG
+    R = c.get('battleRounds', 5)
+    gain = c.get('lossGain', 1.0)
     out = []
     for f in range(21):
-        g = min(f + 1, 20)
-        pa, pd = CURVE_A[g], CURVE_D[g]
+        pa, pd = ACT_A[f], ACT_D[f]
+        # 校准实录：曾改用「层内 DEF 中点」(ACT_D[f]+ACT_D[f+1])/2 作基准想
+        # 减少低层零伤，但净伤被 max(0,·) 截断 + atk 前缀钳制后实际损血远超
+        # 估算，20F 实测 HP 剩 50、全层 lethal 死局，故回退到进层 DEF。
+        # 低层零伤偏多是 v0.16 延续现象（v0.16 已有 46 场零伤）；本轮挑战性
+        # 主要来自「怪防翻倍 -> 破防临界 / 回合 3→5 / 高防挡路怪 7~8 回合」
+        # 与全塔损血 +26%，17F 起每层 1100~1500 损血已明显收紧。
         floor_loss = (c['loss0'] + c['lossK'] * f) * c.get('lossMul', 1.0)
-        per_mon = floor_loss / max(1, cnt[f])
-        mph = max(2, per_mon / (c['rounds'] - 1))
-        per_hit = max(8, round(pa * 0.7))
-        # v0.14 校准实录：曾试过把 defGap 按怪数摊薄，想抵消「加怪抬难度」，
-        # 但 atk 的基数是 CURVE_D（下层玩家 DEF 建模值），solver「先捡道具再
-        # 打怪」时实际 DEF 比它低，摊薄 gap 只减了零头、怪数却翻倍，低层总
-        # 损血反而被放大（19F 死局）。故保留 v0.9 原曲线，改用「精英怪单独
-        # 加权」拉开强度差距 —— 普通怪难度与 v0.13 同口径。
-        atk = max(pd + c['defGap'], c['atkFloor'] + 4 * f) + mph
-        dfn = max(0, pa - per_hit)
-        hp = (c['rounds'] - 1) * per_hit + 1
-        # mph 按该层怪数摊薄，怪数 2/3 交替会让 atk 出现 ±回落；
+        # 每怪目标损血：v0.16 实测标定 costMul=5.0 后再乘 lossGain
+        cost = floor_loss / max(1, cnt[f]) * c.get('costMul', 5.0) * gain
+        # v0.17 核心：怪防按玩家【实测】ATK 的比例直接给
+        dfn = round(c.get('defRatio', 0.65) * pa)
+        per_hit = max(1, pa - dfn)
+        hp = (R - 1) * per_hit + 1
+        mon_per_hit = cost / (R - 1)
+        atk = pd + mon_per_hit
         # 前缀最大值钳制，保证「怪 ATK 逐层不回落」—— 玩家 DEF 增长始终追不上。
         atk = max(atk, out[-1]['atk']) if out else atk
         out.append({'hp': round(hp), 'atk': round(atk), 'def': round(dfn),
@@ -402,6 +442,10 @@ def candidate_pool(g, has_room, avoid=None):
 # 数值口径不变：怪数进 count_mobs -> build_floor_scale 按怪数摊薄目标总损血，
 # 单层总损血仍等于 CURVE_CFG 的 loss0+lossK*f，战斗场次变多、每场更轻。
 GATE_TARGET = 3
+# v0.17：高防低攻「挡路怪」复用现有石头人 m6（不新增字符 / 精灵帧 / 图鉴）。
+# 投到主路第一道瓶颈 + 第一个支路凹室入口：进层捡完第一带攻击道具后可破防，
+# 但每击极薄、要打 7~8 回合，攻击不够就明显卡住前进（可解、非死局）。
+WALL_GUARD_CH = '6'
 GUARD_LOW = ['1', '2']
 GUARD_MID = ['2', '4']
 GUARD_HIGH = ['4', '7']
@@ -411,11 +455,13 @@ ALCOVE_LOOT = ['a', 'd', 'P', 'g']   # 红宝石 / 蓝宝石 / 大血瓶 / 金�
 
 
 def guard_pool(n):
-    """守路怪只用常规怪种，且必须「进层就打得过」。
+    """守路怪默认只用常规怪种、必须「进层就打得过」。
 
-    m6 石头人 defW=1.7 会造破防尖峰（v0.9 的 6F 根因），m5/m8 法师 pierce
-    真实伤害会绕开按 DEF 建模的损血曲线。瓶颈是唯一通道，一旦打不过，
-    findPath 把怪当墙、上下两带断开 -> 整层死局。故严格限定常规怪种。
+    v0.15：瓶颈是唯一通道，一旦打不过 findPath 把怪当墙、上下两带断开 ->
+    整层死局，故 m5/m8 pierce 与高破防怪一律排除。
+    v0.17：第一道瓶颈 / 第一个凹室入口由 make_floor 单独改投 WALL_GUARD_CH
+    （高防低攻石头人）。新口径下它「可破防但回合多」，且成长道具固定投在
+    第一带（start_region）可先捡，故不会形成死局；其余守路位仍用常规怪种。
     """
     if n <= 5:  return GUARD_LOW
     if n <= 11: return GUARD_MID
@@ -665,12 +711,19 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
     hidden_here = []
 
     # 0) v0.15：守路怪 / 守护怪 / 凹室补给先占位（不消耗候选池）
+    # v0.17：第一道闸墙瓶颈 + 第一个凹室入口改投高防低攻挡路怪 WALL_GUARD_CH；
+    #   其余守路位保持 guard_pool 的常规怪种，避免整层 3 道瓶颈全变成磨血怪。
+    #   2F~16F 才投：1F 玩家裸属性 ATK 只有 20、余量太小（实测 perHit=1 会
+    #   lethal 封死主路）；17F 起有屏障倍率叠加，高防怪会变成 20 回合尖峰。
+    #   这两个坐标都在 skip_by_floor（gates / alcove entry / 割点）里，
+    #   retier_monsters 不会把它们替换掉。
+    use_wall = 2 <= floor_no <= 16
     gp = guard_pool(floor_no)
     for i, (gx, gy) in enumerate(gates):
-        g[gy][gx] = gp[i % len(gp)]
+        g[gy][gx] = WALL_GUARD_CH if (use_wall and i == 0) else gp[i % len(gp)]
     for i, a in enumerate(alcoves):
         ex, ey = a['entry']
-        g[ey][ex] = gp[(len(gates) + i) % len(gp)]
+        g[ey][ex] = WALL_GUARD_CH if (use_wall and i == 0) else gp[(len(gates) + i) % len(gp)]
         cx, cy = a['cell']
         g[cy][cx] = ALCOVE_LOOT[(floor_no + i) % len(ALCOVE_LOOT)]
 
@@ -952,21 +1005,33 @@ def build():
     # 经典魔塔怪种分工：石头人高防低血（破防博弈）、法师/警卫真实伤害（无视防御）。
     # v0.13：exp = 击杀经验（基础值，按 1~7F×1 / 8~14F×2 / 15~21F×3 楼层档放大，
     # 全塔总经验约 900+，供 8F 法师处 30 经验/次兑换攻防血，量级与商店金币经济相当）。
+    # v0.17：常规怪 atkW 收敛到 1.0 附近。scaledMon 是「atk = s.atk × atkW」，
+    #   而实际净伤 = atk - 玩家DEF，是差值：atkW=1.15 时会额外放大 0.15×玩家DEF
+    #   （20F 实测 +49/次），与反解出来的 M≈10 完全脱钩，再乘 5 回合就爆表
+    #   （20F 回放 HP 剩 51、全部 lethal）。怪种差异改由 hpW / defW / pierce 承担。
+    #   pierce 系（m5/m8）的伤害 = atkW×s.atk 且无视 DEF，回合数 3→5 会让它
+    #   线性翻倍，故权重同步减半，保持每怪损血不变。
     monsters = [
         {'id': 'm1', 'ch': '1', 'name': '史莱姆', 'hp': 20, 'atk': 8, 'def': 2, 'gold': 3,
-         'exp': 4, 'bg': '#4caf50', 'hpW': 0.85, 'atkW': 0.9, 'defW': 0.8},
+         'exp': 4, 'bg': '#4caf50', 'hpW': 0.85, 'atkW': 0.95, 'defW': 0.8},
         {'id': 'm2', 'ch': '2', 'name': '蝙蝠', 'hp': 35, 'atk': 14, 'def': 5, 'gold': 6,
          'exp': 6, 'bg': '#7e57c2', 'hpW': 1.0, 'atkW': 1.0, 'defW': 1.0},
         {'id': 'm4', 'ch': '4', 'name': '骷髅兵', 'hp': 50, 'atk': 20, 'def': 8, 'gold': 10,
-         'exp': 9, 'bg': '#b0bec5', 'hpW': 1.1, 'atkW': 1.05, 'defW': 1.1},
-        {'id': 'm6', 'ch': '6', 'name': '石头人', 'hp': 60, 'atk': 12, 'def': 26, 'gold': 14,
-         'exp': 11, 'bg': '#8d6e63', 'hpW': 0.7, 'atkW': 0.85, 'defW': 1.7},
-        {'id': 'm7', 'ch': '7', 'name': '兽人', 'hp': 55, 'atk': 24, 'def': 7, 'gold': 15,
-         'exp': 10, 'bg': '#d84315', 'hpW': 1.15, 'atkW': 1.15, 'defW': 0.9},
-        {'id': 'm5', 'ch': '5', 'name': '暗法师', 'hp': 45, 'atk': 26, 'def': 6, 'gold': 16,
-         'exp': 12, 'bg': '#5c6bc0', 'hpW': 0.9, 'atkW': 0.16, 'defW': 0.8, 'pierce': True},
-        {'id': 'm8', 'ch': '8', 'name': '魔法警卫', 'hp': 50, 'atk': 20, 'def': 10, 'gold': 18,
-         'exp': 13, 'bg': '#00897b', 'hpW': 1.0, 'atkW': 0.20, 'defW': 1.0, 'pierce': True},
+         'exp': 9, 'bg': '#b0bec5', 'hpW': 1.1, 'atkW': 1.0, 'defW': 1.1},
+    # v0.17：高防低攻「挡路怪」。新基准 def=0.65·pa / perHit=0.35·pa /
+    #   hp=4·perHit+1；defW=1.23 -> def≈0.80·pa，玩家每击只剩 0.20·pa，
+    #   hpW=1.0 -> hp≈1.40·pa -> 约 7 回合；atkW=0.92 让怪攻低于玩家实测
+    #   DEF，单次反击伤害很低但回合多，形成「砍不动、得先堆攻击」的挡路感。
+    #   注意：字面「怪防≈怪攻」不可行 —— 怪攻按玩家 DEF 建模、而 DEF 全程
+    #   高于 ATK，实测会让 21 层全部 unbreakable（见开发盘点 0-O）。
+    {'id': 'm6', 'ch': '6', 'name': '石头人', 'hp': 60, 'atk': 12, 'def': 26, 'gold': 14,
+     'exp': 11, 'bg': '#8d6e63', 'hpW': 1.0, 'atkW': 0.92, 'defW': 1.23},
+    {'id': 'm7', 'ch': '7', 'name': '兽人', 'hp': 55, 'atk': 24, 'def': 7, 'gold': 15,
+         'exp': 10, 'bg': '#d84315', 'hpW': 1.15, 'atkW': 1.05, 'defW': 0.9},
+    {'id': 'm5', 'ch': '5', 'name': '暗法师', 'hp': 45, 'atk': 26, 'def': 6, 'gold': 16,
+         'exp': 12, 'bg': '#5c6bc0', 'hpW': 0.9, 'atkW': 0.08, 'defW': 0.8, 'pierce': True},
+    {'id': 'm8', 'ch': '8', 'name': '魔法警卫', 'hp': 50, 'atk': 20, 'def': 10, 'gold': 18,
+         'exp': 13, 'bg': '#00897b', 'hpW': 1.0, 'atkW': 0.10, 'defW': 1.0, 'pierce': True},
         # v0.14 精英怪「宝库守卫」：scaleShift 让 scaledMon 取 FLOOR_SCALE[floor+9]
         # （含 21F 之上的外推段），于是同一只怪在 3F 就是 12F 强度、在 18F 更远超终局。
         # 初期 atk 破不了防 / 损血致命，被 resolveStep 拦下提示「硬拼会阵亡」；
@@ -985,7 +1050,12 @@ def build():
         # 终局回头仍全部可打（损血 0/322/780/1456 HP，梯度递增）。
         # 用户明确「强敌除外」：solver.scan 排除 elite 目标与守卫中的宝库道具，
         # 故调权重不影响正式回放路线，只影响玩家手动挑战时的判定。
-        'hpW': 3.0, 'atkW': 1.6, 'defW': 3.8,
+        # v0.17：常规怪防基准从 0.30·pa 抬到 0.65·pa，外推段 FS[26].def 由
+        #   约 90 涨到约 245，旧 defW=3.8 会把 X 顶到 900+，终局 ATK303 也
+        #   破不了防。按正式回放首次/终局属性三维搜索（hpW/atkW/defW）重校为
+        #   0.8 / 1.25 / 1.0：4 处首次仍打不过（3F/9F/14F 破不了防、18F 会
+        #   阵亡），终局回头全可打且损血 0/112/572/1491 梯度递增、回合 1~8。
+        'hpW': 0.8, 'atkW': 1.25, 'defW': 1.0,
          'scaleShift': ELITE_SHIFT, 'elite': True},
         # 魔王：独立终局数值，不参与逐层缩放（经典魔塔 Boss 惯例）；通关即终局，经验无意义
         {'id': 'm3', 'ch': '3', 'name': '魔王', 'hp': BOSS_FINAL['hp'],
@@ -1037,8 +1107,8 @@ def build():
 
     data = {
         'meta': {
-            'schema': 7,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 8,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},

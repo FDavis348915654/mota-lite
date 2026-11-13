@@ -265,10 +265,12 @@ ok('CHANGELOG 有 v0.15.0 且说明走廊 / 瓶颈 / 清层节奏',
   (() => { const c = CHANGELOG.find(x => x.v === 'v0.15.0')
            return !!c && c.note.includes('窄走廊') && c.note.includes('守路怪') &&
                   c.note.includes('不打怪不能上楼') && c.note.includes('强敌') })())
-ok('CHANGELOG 首条为 v0.16.0 且说明小精灵 / 能量核心 / 护盾 / 交互等待',
-  CHANGELOG[0].v === 'v0.16.0' && CHANGELOG[0].note.includes('小精灵') &&
-  CHANGELOG[0].note.includes('能量核心') && CHANGELOG[0].note.includes('能量护盾') &&
-  CHANGELOG[0].note.includes('交互等待'))
+ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互等待）',
+  CHANGELOG.some(c => c.v === 'v0.16.0' && c.note.includes('小精灵') &&
+    c.note.includes('能量核心') && c.note.includes('能量护盾') && c.note.includes('交互等待')))
+ok('CHANGELOG 首条为 v0.17.0 且说明怪防 / 高防挡路怪 / 难度提高',
+  CHANGELOG[0].v === 'v0.17.0' && CHANGELOG[0].note.includes('防御') &&
+  CHANGELOG[0].note.includes('挡路') && CHANGELOG[0].note.includes('难度'))
 
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
@@ -295,9 +297,10 @@ ok('make_levels.py 有闸墙 / 凹室 / 第一带 / 守路怪池',
   genPy.includes('def gate_skeleton') && genPy.includes('def add_alcoves') &&
   genPy.includes('def start_region') && genPy.includes('def guard_pool') &&
   genPy.includes('GATE_TARGET'))
-ok('make_levels.py 闸墙起始行 >= y4 且强敌加权已校准（v0.16 atkW1.6/defW3.8）',
+ok('make_levels.py 闸墙起始行 >= y4 且强敌加权已校准（v0.17 hpW0.8/atkW1.25/defW1.0）',
   genPy.includes('range(4, 12)') &&
-  genPy.includes("'atkW': 1.6") && genPy.includes("'defW': 3.8"))
+  genPy.includes("'hpW': 0.8") && genPy.includes("'atkW': 1.25") &&
+  genPy.includes("'defW': 1.0"))
 ok('solver.js 强敌纯支线 + 保护阈值放大（v0.16 含精灵往返 6000/1400）',
   read('solver.js').includes('!mon.elite') &&
   read('solver.js').includes('guarded.has(key)') &&
@@ -309,10 +312,10 @@ ok('browser_check.mjs 有 v0.15 走廊拦路端到端专项',
   browserCheck.includes('v0.15 走廊'))
 
 // ---- v0.16 小精灵 / 能量核心 / 能量护盾 / 交互等待：静态防漂移 ----
-ok('make_levels.py 有 v0.16 常量（精灵 e / 核心 C / 17F 屏障 / 怪数 12 / 损血×1.3 / schema 7）',
+ok('make_levels.py 有 v0.16 常量（精灵 e / 核心 C / 17F 屏障 / 怪数 12 / 损血×1.3）',
   genPy.includes("FAIRY_CH = 'e'") && genPy.includes("CORE_CH = 'C'") &&
   genPy.includes('BARRIER_FLOOR = 17') && genPy.includes('TARGET_MOBS = 12') &&
-  genPy.includes('lossMul=1.3') && genPy.includes("'schema': 7"))
+  genPy.includes('lossMul=1.3'))
 ok('levels.json 有 barrier 表且 build_tables.py 导出 BARRIER',
   read('tools/build_tables.py').includes("('BARRIER',") &&
   read('tables.js').includes('export const BARRIER'))
@@ -339,4 +342,28 @@ ok('gen_assets.py 有 fairy / core 两帧与 e/C 映射',
   read('tools/gen_assets.py').includes("'e': 'fairy'"))
 ok('browser_check.mjs 有 v0.16 小精灵端到端专项',
   browserCheck.includes('v0.16 小精灵'))
+
+// ---- v0.17 高防怪 / 破防临界 / 挡路怪：静态防漂移 ----
+ok('make_levels.py 有实测属性表 ACT_A / ACT_D 与 v0.17 曲线参数',
+  genPy.includes('ACT_A = [') && genPy.includes('ACT_D = [') &&
+  genPy.includes('defRatio=0.65') && genPy.includes('battleRounds=5') &&
+  genPy.includes('lossGain=1.3') && genPy.includes('costMul=5.0'))
+ok('make_levels.py build_floor_scale 按「先定怪防再反解 HP/ATK」',
+  genPy.includes("dfn = round(c.get('defRatio', 0.65) * pa)") &&
+  genPy.includes('mon_per_hit = cost / (R - 1)'))
+ok('make_levels.py 有高防挡路怪 WALL_GUARD_CH + 2F~16F 投放层限制',
+  genPy.includes("WALL_GUARD_CH = '6'") && genPy.includes('use_wall = 2 <= floor_no <= 16'))
+ok('make_levels.py 石头人 m6 为高防低攻（defW1.23 / atkW0.92 / hpW1.0）',
+  genPy.includes("'hpW': 1.0, 'atkW': 0.92, 'defW': 1.23"))
+ok('make_levels.py 常规怪 atkW 收敛 / pierce 权重减半（防净伤放大）',
+  genPy.includes("'atkW': 0.08") && genPy.includes("'atkW': 0.10") &&
+  genPy.includes("'atkW': 1.05, 'defW': 0.9"))
+ok('make_levels.py BARRIER_BOOST 收敛为温和台阶（hp1.1/atk1.05/def1.0）',
+  genPy.includes("BARRIER_BOOST = {'hp': 1.1, 'atk': 1.05, 'def': 1.0}"))
+ok('make_levels.py meta.schema = 8', genPy.includes("'schema': 8"))
+ok('levels.json 有 defRatio 曲线与 schema 8',
+  read('levels/levels.json').includes('"defRatio": 0.65') &&
+  read('levels/levels.json').includes('"schema": 8'))
+ok('browser_check.mjs 有 v0.17 高防端到端专项',
+  browserCheck.includes('v0.17 高防'))
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

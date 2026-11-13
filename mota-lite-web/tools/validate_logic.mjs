@@ -131,12 +131,20 @@ console.log('\n=== 5. 战斗公式（经典魔塔同式：ceil(HP/(攻-防)) 回
 const slime = monsterByCh('1')
 const bat = monsterByCh('2')
 const hero0 = newGame().hero
-// 1F 裸装英雄 A10/D10 vs 1F 史莱姆：v0.9 起战斗有代价，不再是「防杀 0 损血」
-ok('1F 裸装打史莱姆会掉血（战斗系统生效）', calcBattle(hero0, slime, 0).hpCost > 0,
-  'hpCost=' + calcBattle(hero0, slime, 0).hpCost)
+// v0.17：怪防抬到 0.65·玩家实测ATK 后，1F 裸装 ATK10 连史莱姆(def≈10) 都
+// 破不了防，必须先捡第一带的铁剑 —— 这正是「高防怪带来的破防临界」。
+const rNaked = calcBattle(hero0, slime, 0)
+ok('1F 裸装破不了防（v0.17 破防临界）', rNaked.reason === 'unbreakable', rNaked.reason)
 const sword = { hp: 200, atk: 20, def: 10, gold: 0, keys: { y: 0, b: 0, r: 0 }, fly: 0, bomb: 0 }
-ok('拿剑后打蝙蝠损血下降', calcBattle(sword, bat, 0).hpCost < calcBattle(hero0, bat, 0).hpCost,
-  calcBattle(hero0, bat, 0).hpCost + ' -> ' + calcBattle(sword, bat, 0).hpCost)
+ok('拿剑后可破防并产生战斗损血',
+  calcBattle(sword, slime, 0).ok && calcBattle(sword, slime, 0).hpCost > 0,
+  'hpCost=' + calcBattle(sword, slime, 0).hpCost)
+// 攻击再 +10 -> 每击变厚 -> 回合数下降 -> 累计损血下降（攻击宝石边际收益）
+const sword2 = { ...sword, atk: 30 }
+const rSword = calcBattle(sword, bat, 0), rSword2 = calcBattle(sword2, bat, 0)
+ok('攻击 +10 后回合数下降、损血下降（v0.17 破防后的边际收益）',
+  rSword2.rounds < rSword.rounds && rSword2.hpCost < rSword.hpCost,
+  rSword.rounds + '回合/' + rSword.hpCost + ' -> ' + rSword2.rounds + '回合/' + rSword2.hpCost)
 eq(calcBattle({ atk: 2, def: 10, hp: 200 }, slime, 0).reason, 'unbreakable',
   'ATK<=DEF 判不可破防')
 // 先手：承受 (rounds-1) 次反击
@@ -1064,6 +1072,65 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
     FLOORS.slice(0, 20).every(f =>
       f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12) &&
     FLOOR_SCALE[0].targetLoss === 31)
+}
+
+// ---- v0.17 高防怪 / 破防临界 / 挡路怪：回放与数值口径 ----
+{
+  const sol17 = findSolution()
+  ok('v0.17 回放通关（步数 / 轮数与 v0.16 同量级，路线不退化）',
+    !!sol17 && sol17.state.ended === 'win' &&
+    sol17.steps.length > 3000 && sol17.steps.length < 4000 &&
+    sol17.rounds > 500 && sol17.rounds < 700,
+    sol17 ? sol17.steps.length + ' 步 / ' + sol17.rounds + ' 轮' : 'null')
+  let st = newGame()
+  const enter17 = {}, fight17 = {}, dmg17 = {}
+  let battles17 = 0
+  for (const d of sol17.steps) {
+    const before = st
+    const rr = resolveStep(st, d); st = rr.state
+    if (enter17[before.floor] === undefined) enter17[before.floor] = { ...before.hero }
+    for (const e of rr.events) if (e.t === 'msg' && e.text.startsWith('胜 ')) {
+      if (fight17[before.floor] === undefined) fight17[before.floor] = { ...before.hero }
+      battles17++
+      const mm = e.text.match(/-(\d+)HP/)
+      dmg17[before.floor] = (dmg17[before.floor] || 0) + (mm ? Number(mm[1]) : 0)
+    }
+  }
+  ok('FLOOR_SCALE 怪防按每层【首次战斗实测 ATK】的 0.65 建模（误差 <=2）',
+    FLOOR_SCALE.slice(0, 21).every((s, f) =>
+      !!fight17[f] && Math.abs(s.def - Math.round(0.65 * fight17[f].atk)) <= 2))
+  const total17 = Object.values(dmg17).reduce((a, b) => a + b, 0)
+  ok('全塔总损血较 v0.16 的 6558 上调 20~40%（B 口径目标 +30%）',
+    total17 > 6558 * 1.2 && total17 < 6558 * 1.4, String(total17))
+  ok('无单层掉血尖峰（最高层损血 < 总损血 / 4）',
+    Math.max(...Object.values(dmg17)) < total17 / 4,
+    '最高 ' + Math.max(...Object.values(dmg17)))
+  const wall17 = monsterByCh('6'), std17 = monsterByCh('2')
+  ok('m6 石头人高防低攻（防 > 常规怪、攻 < 常规怪）',
+    scaledMon(wall17, 5).def > scaledMon(std17, 5).def &&
+    scaledMon(wall17, 5).atk < scaledMon(std17, 5).atk)
+  const h6 = fight17[5] || { hp: 99999, atk: 58, def: 88, flags: 0 }
+  const rw = calcBattle({ ...h6 }, wall17, 5), rs = calcBattle({ ...h6 }, std17, 5)
+  ok('m6 可破防但回合数明显多于常规怪（真挡路、非死局）',
+    rw.ok && rs.ok && rw.rounds >= rs.rounds + 2,
+    'm6 ' + rw.rounds + ' 回合 vs 常规 ' + rs.rounds + ' 回合')
+  ok('1F / 17F~21F 无高防挡路怪（低层裸属性 / 屏障叠加保护）',
+    FLOORS[0].rows.join('').indexOf('6') < 0 &&
+    FLOORS.slice(16).every(f => f.rows.join('').indexOf('6') < 0))
+  const elite17 = monsterByCh('X')
+  ok('4 处强敌首次进层全打不过、终局回头全可打（v0.14 口径不破）',
+    [2, 8, 13, 17].every(f => {
+      const a = calcBattle({ ...(enter17[f] || { hp: 200, atk: 10, def: 10, flags: 0 }) }, elite17, f)
+      const b = calcBattle(st.hero, elite17, f)
+      return !a.ok && b.ok
+    }))
+  ok('17F 未强化护盾硬门槛仍生效（堆 99999 攻防也绕不过）',
+    calcBattle({ hp: 999999, atk: 99999, def: 99999, flags: 0 },
+      monsterByCh('1'), BARRIER.floor).reason === 'shield')
+  ok('魔王战仍有非零损血（终局 -126HP 量级）',
+    calcBattle(st.hero, monsterByCh('3'), 20).hpCost > 0)
+  ok('战斗 242 场、通关存档仍 <= SAVE_LIMIT',
+    battles17 === 242 && serialize(st).length <= CONFIG.SAVE_LIMIT)
 }
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

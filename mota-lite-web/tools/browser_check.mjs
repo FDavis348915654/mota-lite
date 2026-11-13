@@ -241,8 +241,10 @@ try {
   check('战斗预览列出本层存活怪（带本层实际 HP/攻/防）',
     await ev("document.querySelectorAll('#battleList .battle-row').length > 0 && [...document.querySelectorAll('#battleList .bstat')].every(e => e.textContent.split('/').length === 3 && e.textContent.split('/').every(n => Number(n) > 0))"),
     await txt('#battleList'))
-  check('v0.9 战斗有代价：1F 裸装预览含「会阵亡」（不再是 100% 零伤）',
-    (await txt('#battleList')).includes('会阵亡'), await txt('#battleList'))
+  // v0.17：怪防抬到 0.65·玩家ATK 后，1F 裸装 ATK10 连史莱姆都破不了防，
+  // 预览从「会阵亡」变成「不可破防」——这正是破防临界的直观体现。
+  check('v0.17 破防临界：1F 裸装预览含「不可破防」（不再是 100% 零伤）',
+    (await txt('#battleList')).includes('不可破防'), await txt('#battleList'))
   check('战斗预览数值 = scaledMon 本层实际值', await ev(`(async()=>{
     const t = await import('./tables.js'); const l = await import('./logic.js');
     const rows = t.FLOORS[0].rows;
@@ -1202,8 +1204,10 @@ try {
     JSON.stringify(V14.elites.map(e => ({ f:e.floor+1, x:e.x, y:e.y, st:e.stand, tr:e.treasures.length }))))
   check('v0.14 强敌：elite 精灵帧 + X 映射 + FLOOR_SCALE 30 组',
     V14.atlasHasElite && V14.scaleGroups === 30)
-  check('v0.14 强敌：X 带 scaleShift9 / elite / hpW3',
-    !!V14.mon && V14.mon.scaleShift === 9 && V14.mon.elite === true && V14.mon.hpW === 3,
+  // v0.17：新 FLOOR_SCALE 外推段 def 涨约 3 倍，精英按回放首次/终局属性
+  // 三维重校为 hpW0.8 / atkW1.25 / defW1.0，保持「首次打不过、终局可打」。
+  check('v0.14 强敌：X 带 scaleShift9 / elite / v0.17 重校 hpW0.8',
+    !!V14.mon && V14.mon.scaleShift === 9 && V14.mon.elite === true && V14.mon.hpW === 0.8,
     JSON.stringify(V14.mon))
   check('v0.14 强敌：开局属性打不过全部 4 处', V14.weakAll)
   check('v0.14 强敌：变强后全部可打', V14.strongAll)
@@ -1274,7 +1278,9 @@ try {
       }
       return false;
     };
-    const START=[1,1], GOAL=[11,13], GUARD=new Set(['1','2','4','7']);
+    // v0.17：瓶颈守路怪仍是常规怪种，但第一道闸墙缺口按需求改投高防低攻
+    // 挡路怪 m6（字符 6）；强敌 X / pierce 真伤怪依旧绝不进缺口（会切断主路）。
+    const START=[1,1], GOAL=[11,13], GUARD=new Set(['1','2','4','7','6']);
     const floors = t.FLOORS.map((f,fi)=>{
       const rows=f.rows, gates=[];
       // 横贯闸墙：x=1..W-2 除唯一缺口外全砌 '#'，缺口站守路怪
@@ -1349,7 +1355,7 @@ try {
   check('v0.15 走廊：38 道闸墙缺口全部是几何割点（堵住即上不了楼）',
     V15.totalGates===38 && V15.cutGates===38,
     '闸墙'+V15.totalGates+' / 割点'+V15.cutGates)
-  check('v0.15 走廊：守路怪只用常规怪种 1/2/4/7（不掺强敌 / 破防 / 真伤）', V15.guardOk)
+  check('v0.15 走廊：守路怪为常规怪 1/2/4/7 + v0.17 高防挡路怪 6（不掺强敌 / 真伤）', V15.guardOk)
   check('v0.15 走廊：21 层全部「不打怪不能上楼」',
     V15.floors.every(f=>!f.noFight),
     V15.floors.filter(f=>f.noFight).length ? V15.floors.filter(f=>f.noFight).map(f=>(f.f+1)+'F').join(',') : '无')
@@ -1566,6 +1572,166 @@ try {
     /能量护盾/.test(TX16.f17) && /能量护盾/.test(TX16.help) &&
     /能量核心/.test(TX16.itemC) && /小精灵/.test(TX16.itemE) &&
     /等一小会儿/.test(TX16.wait), JSON.stringify({ intro:TX16.intro, core:TX16.core, charge:TX16.charge, done:TX16.done }))
+
+  // ---- v0.17 高防怪 / 破防临界 / 挡路怪 专项端到端 ----
+  // 判端全部运行期从 tables.js / logic.js / solver.js / levels.json 现算，不写死坐标与数值。
+  const V17 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
+    const cfg=(await (await fetch('./levels/levels.json')).json()).meta.curve;
+    const byCh=ch=>t.MONSTERS.find(m=>m.ch===ch);
+    const m1=byCh('1'), m2=byCh('2'), m6=byCh('6'), X=byCh('X'), boss=byCh('3');
+    const naked=l.calcBattle(l.newGame().hero,m1,0);
+    const sword={hp:200,atk:20,def:10,flags:0,keys:{y:0,b:0,r:0}};
+    const afterSword=l.calcBattle(sword,m1,0);
+    const rSword=l.calcBattle(sword,m2,0), rSword2=l.calcBattle({...sword,atk:30},m2,0);
+    const w6=l.scaledMon(m6,5), s2=l.scaledMon(m2,5);
+    const sol=sv.findSolution();
+    let s=l.newGame(); const enter={},fight={},dmg={}; let battles=0;
+    if(sol) for(const d of sol.steps){
+      const before=s, rr=l.resolveStep(s,d); s=rr.state;
+      if(enter[before.floor]===undefined) enter[before.floor]={...before.hero};
+      for(const e of rr.events) if(e.t==='msg'&&e.text.startsWith('胜 ')){
+        if(fight[before.floor]===undefined) fight[before.floor]={...before.hero};
+        battles++; const mm=e.text.match(/-([0-9]+)HP/);
+        dmg[before.floor]=(dmg[before.floor]||0)+(mm?Number(mm[1]):0);
+      }
+    }
+    const totalDmg=Object.values(dmg).reduce((a,b)=>a+b,0);
+    const WALL='#A';
+    const reach=(rows,bx,by)=>{
+      const seen=new Set(['1,1']), q=[[1,1]];
+      while(q.length){const p=q.pop(), x=p[0], y=p[1];
+        if(x===11&&y===13) return true;
+        for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const nx=x+d[0], ny=y+d[1], k=nx+','+ny;
+          if(nx<0||ny<0||nx>=13||ny>=15||seen.has(k)) continue;
+          if((bx===nx&&by===ny)||WALL.includes(rows[ny][nx])) continue;
+          seen.add(k); q.push([nx,ny]);
+        }
+      }
+      return false;
+    };
+    const cnt6=f=>f.rows.join('').split('6').length-1;
+    const cuts=t.FLOORS.map(f=>{
+      const rows=f.rows.map(r=>r.split('')); let n=0;
+      for(let y=0;y<rows.length;y++)for(let x=0;x<rows[0].length;x++)
+        if(rows[y][x]==='6'&&!reach(rows,x,y)) n++;
+      return n;
+    });
+    const eliteOK=[2,8,13,17].every(f=>{
+      const a=l.calcBattle({...(enter[f]||{hp:200,atk:10,def:10,flags:0})},X,f);
+      const b=l.calcBattle(s.hero,X,f); return !a.ok&&b.ok;
+    });
+    return {
+      cfg,
+      def1:t.FLOOR_SCALE[0].def, def21:t.FLOOR_SCALE[20].def,
+      ratioMin:Math.min(...t.FLOOR_SCALE.slice(0,21).map(v=>v.def/v.atk)),
+      ratio21:t.FLOOR_SCALE[20].def/t.FLOOR_SCALE[20].atk,
+      defModelOK:t.FLOOR_SCALE.slice(0,21).every((v,f)=>!!fight[f]&&Math.abs(v.def-Math.round(0.65*fight[f].atk))<=2),
+      nakedReason:naked.reason, swordOK:afterSword.ok, swordCost:afterSword.hpCost,
+      r1:rSword.rounds, c1:rSword.hpCost, r2:rSword2.rounds, c2:rSword2.hpCost,
+      m6defW:m6.defW, m6atkW:m6.atkW, m6hpW:m6.hpW,
+      w6def:w6.def, w6atk:w6.atk, s2def:s2.def, s2atk:s2.atk,
+      xHpW:X.hpW, xAtkW:X.atkW, xDefW:X.defW,
+      wallAt1:cnt6(t.FLOORS[0]), wallAt17plus:t.FLOORS.slice(16).reduce((a,f)=>a+cnt6(f),0),
+      wallMidMin:Math.min(...t.FLOORS.slice(1,16).map(f=>cnt6(f))),
+      wallTotal:t.FLOORS.reduce((a,f)=>a+cnt6(f),0),
+      cutTotal:cuts.reduce((a,b)=>a+b,0), cutFloors:cuts.slice(1,16).every(n=>n>=1),
+      solOK:!!sol&&sol.state.ended==='win', steps:sol?sol.steps.length:0, rounds:sol?sol.rounds:0,
+      totalDmg, maxDmg:Math.max(...Object.values(dmg)), battles,
+      endHP:s.hero.hp, endATK:s.hero.atk, endDEF:s.hero.def,
+      eliteOK, boost:t.BARRIER.boost,
+      shield:l.calcBattle({hp:999999,atk:99999,def:99999,flags:0},m1,t.BARRIER.floor).reason,
+      bossCost:l.calcBattle(s.hero,boss,20).hpCost,
+      atkWs:t.MONSTERS.filter(m=>!m.elite&&!m.pierce&&!m.noScale).map(m=>m.atkW),
+      pierceWs:t.MONSTERS.filter(m=>m.pierce).map(m=>m.atkW)
+    };
+  })()`)
+  check('v0.17 高防：meta.curve 有 defRatio0.65 / battleRounds5 / lossGain1.3 / costMul5.0',
+    V17.cfg.defRatio===0.65 && V17.cfg.battleRounds===5 &&
+    V17.cfg.lossGain===1.3 && V17.cfg.costMul===5.0, JSON.stringify(V17.cfg))
+  check('v0.17 高防：标准怪防大幅抬高（1F>=13 / 21F>=190 / def·atk^-1 0.3~0.6）',
+    V17.def1>=13 && V17.def21>=190 && V17.ratioMin>=0.28 && V17.ratio21>=0.5,
+    '1F=' + V17.def1 + ' 21F=' + V17.def21 + ' min=' + V17.ratioMin.toFixed(2))
+  check('v0.17 高防：怪防按每层首次战斗实测 ATK 的 0.65 建模', V17.defModelOK)
+  check('v0.17 破防：1F 裸装 ATK10 破不了防，拿剑后可破防且有损血',
+    V17.nakedReason==='unbreakable' && V17.swordOK && V17.swordCost>0,
+    V17.nakedReason + ' / 拿剑 hpCost=' + V17.swordCost)
+  check('v0.17 破防：攻击 +10 让蝙蝠回合数与损血双降（攻击宝石边际收益）',
+    V17.r2<V17.r1 && V17.c2<V17.c1,
+    V17.r1 + '回合/' + V17.c1 + ' -> ' + V17.r2 + '回合/' + V17.c2)
+  check('v0.17 挡路怪：m6 权重高防低攻（defW>=1.2 / atkW<=0.95 / hpW=1.0）',
+    V17.m6defW>=1.2 && V17.m6atkW<=0.95 && V17.m6hpW===1.0,
+    V17.m6defW + '/' + V17.m6atkW + '/' + V17.m6hpW)
+  check('v0.17 挡路怪：6F 实际数值防高于常规怪、攻低于常规怪',
+    V17.w6def>V17.s2def && V17.w6atk<V17.s2atk,
+    'm6 ' + V17.w6atk + '/' + V17.w6def + ' vs 蝙蝠 ' + V17.s2atk + '/' + V17.s2def)
+  check('v0.17 数值：常规怪 atkW 收敛 0.9~1.05（防净伤被乘法放大）',
+    V17.atkWs.every(w=>w>=0.9&&w<=1.05), JSON.stringify(V17.atkWs))
+  check('v0.17 数值：pierce 权重减半 <=0.10（回合 3→5 不放大真实伤害）',
+    V17.pierceWs.every(w=>w<=0.1), JSON.stringify(V17.pierceWs))
+  check('v0.17 数值：BARRIER.boost 收敛为温和台阶 1.1/1.05/1.0',
+    V17.boost.hp===1.1 && V17.boost.atk===1.05 && V17.boost.def===1.0, JSON.stringify(V17.boost))
+  check('v0.17 强敌：m9 精英重校 0.8/1.25/1.0',
+    V17.xHpW===0.8 && V17.xAtkW===1.25 && V17.xDefW===1.0)
+  check('v0.17 挡路怪：1F 与 17F~21F 不投放、2F~16F 每层至少 1 只、全塔 40 只',
+    V17.wallAt1===0 && V17.wallAt17plus===0 && V17.wallMidMin>=1 && V17.wallTotal===40,
+    '1F=' + V17.wallAt1 + ' 17F+=' + V17.wallAt17plus + ' midMin=' + V17.wallMidMin + ' total=' + V17.wallTotal)
+  check('v0.17 挡路怪：20 只落在主路真割点、2F~16F 每层都有（堵住即上不去楼）',
+    V17.cutTotal>=15 && V17.cutFloors, '割点=' + V17.cutTotal)
+  check('v0.17 回放：findSolution 通关（3355 步 / 600 轮量级、路线不退化）',
+    V17.solOK && V17.steps>3000 && V17.steps<4000 && V17.rounds>500 && V17.rounds<700,
+    V17.steps + ' 步 / ' + V17.rounds + ' 轮')
+  check('v0.17 难度：全塔总损血较 v0.16 的 6558 上调 20~40% 且无单层尖峰',
+    V17.totalDmg>6558*1.2 && V17.totalDmg<6558*1.4 && V17.maxDmg<V17.totalDmg/4,
+    '总损血=' + V17.totalDmg + ' 最高单层=' + V17.maxDmg + ' 终局HP=' + V17.endHP)
+  check('v0.17 强敌：4 处 X 首次全打不过、终局回头全可打', V17.eliteOK)
+  check('v0.17 回归：17F 护盾硬门槛仍在、魔王战仍非零伤',
+    V17.shield==='shield' && V17.bossCost>0, V17.shield + ' / boss -' + V17.bossCost)
+
+  // 真实 DOM：帮助弹层与版本徽章
+  const helpRule17 = await ev("document.querySelector('#helpRule').textContent")
+  check('v0.17 文案：帮助弹层渲染出破防 / 石头人 / 临界攻击',
+    /破防/.test(helpRule17) && /石头人/.test(helpRule17) && /临界攻击/.test(helpRule17))
+  const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
+  check('v0.17 版本：标题徽章显示 v0.17.0', /v0\.17\.0/.test(titleV17), titleV17)
+
+  // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
+  const P17 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js');
+    const rows=t.FLOORS[0].rows, W=rows[0].length;
+    for(let y=1;y<rows.length-1;y++)for(let x=1;x<W-1;x++){
+      if(rows[y][x]!=='1') continue;
+      for(const d of [[-1,0],[1,0],[0,-1],[0,1]]){
+        const sx=x+d[0], sy=y+d[1], c=rows[sy][sx];
+        if(c==='.'||c==='@'){
+          const low=l.newGame(); low.floor=0; low.x=sx; low.y=sy;
+          low.hero.hp=99999; low.hero.atk=10; low.hero.def=10; low.hero.flags=0;
+          const high=l.newGame(); high.floor=0; high.x=sx; high.y=sy;
+          high.hero.hp=99999; high.hero.atk=60; high.hero.def=10; high.hero.flags=0;
+          return {idx:y*W+x, low:l.serialize(low), high:l.serialize(high)};
+        }
+      }
+    }
+    return null;
+  })()`)
+  check('v0.17 破防：找到 1F 史莱姆 + 相邻可站格场景', !!P17, JSON.stringify(P17))
+  if (P17) {
+    await setVal('#saveInput', P17.low); await accept('#btnImport'); await closeStory()
+    await cellClick(P17.idx)
+    const blocked17 = await waitFor(
+      "document.querySelector('#tip').textContent.includes('攻击不足，无法破防') || document.querySelector('#log').textContent.includes('攻击不足，无法破防')", 3000)
+    check('v0.17 破防：裸装 ATK10 真实点击史莱姆被拦下（攻击不足，无法破防）',
+      blocked17, await txt('#tip'))
+    await closeStory()
+    await setVal('#saveInput', P17.high); await accept('#btnImport'); await closeStory()
+    await cellClick(P17.idx)
+    const won17 = await waitFor(
+      "document.querySelector('#log').textContent.includes('胜 ') || document.querySelector('#tip').textContent.includes('胜 ')", 5000)
+    check('v0.17 破防：攻击堆到 60 后同一只怪可击败（临界可解、非死局）',
+      won17, await txt('#log'))
+    await closeStory()
+  }
 
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {
