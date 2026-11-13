@@ -5,7 +5,8 @@ sdkconfig.old
 
 # 组件管理器拉下来的第三方组件
 managed_components/
-dependencies.lock
+# dependencies.lock 反而要提交：它锁死 quickjs-ng / co5300 / cst9217 / codec_dev 的版本与哈希，
+# 换机器 reconfigure 时才不会解析到新版组件而编译不过（文件里没有本机路径）
 
 # Python 缓存
 __pycache__/
