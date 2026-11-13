@@ -115,6 +115,81 @@ void gfx_sprite(int x, int y, int sprite_index)
     }
 }
 
+// 放大绘制：dest 每个像素反查源像素（最近邻）。
+// 源图集固定 28px，屏幕格子 42px = 1.5 倍，不做插值保持像素画质感。
+void gfx_sprite_scaled(int x, int y, int sprite_index, int size)
+{
+    if (!s_fb || sprite_index < 0 || sprite_index >= SPRITE_COUNT || size <= 0) {
+        return;
+    }
+    if (x + size <= 0 || y + size <= 0 || x >= SCR_W || y >= SCR_H) {
+        return;
+    }
+
+    const uint16_t *src = g_sprite_pixels + sprite_index * SPRITE_PIXELS;
+    const uint8_t *mask = g_sprite_alpha + sprite_index * SPRITE_ALPHA_BYTES;
+
+    int mapx[64];
+    if (size > (int)(sizeof(mapx) / sizeof(mapx[0]))) {
+        return;
+    }
+    for (int dx = 0; dx < size; dx++) {
+        mapx[dx] = dx * SPRITE_TILE / size;
+    }
+
+    for (int dy = 0; dy < size; dy++) {
+        int sy = y + dy;
+        if (sy < 0) {
+            continue;
+        }
+        if (sy >= SCR_H) {
+            break;
+        }
+        int syy = dy * SPRITE_TILE / size;
+        const uint8_t *mrow = mask + (syy * SPRITE_TILE) / 8;
+        int mshift = (syy * SPRITE_TILE) & 7;
+        const uint16_t *srow = src + syy * SPRITE_TILE;
+        uint16_t *dst = s_fb + sy * SCR_W;
+
+        for (int dx = 0; dx < size; dx++) {
+            int sx = x + dx;
+            if (sx < 0 || sx >= SCR_W) {
+                continue;
+            }
+            int bit = mshift + mapx[dx];
+            if (!((mrow[bit >> 3] >> (7 - (bit & 7))) & 1)) {
+                continue;
+            }
+            dst[sx] = srow[mapx[dx]];
+        }
+    }
+}
+
+// 四角遮罩：半径内、圆弧外的像素涂黑
+void gfx_mask_rounded(int radius)
+{
+    if (!s_fb || radius <= 0) {
+        return;
+    }
+    if (radius > SCR_W / 2) {
+        radius = SCR_W / 2;
+    }
+    int rr = radius * radius;
+    for (int y = 0; y < radius; y++) {
+        for (int x = 0; x < radius; x++) {
+            int dx = radius - 1 - x;
+            int dy = radius - 1 - y;
+            if (dx * dx + dy * dy <= rr) {
+                continue;
+            }
+            s_fb[y * SCR_W + x] = 0;
+            s_fb[y * SCR_W + (SCR_W - 1 - x)] = 0;
+            s_fb[(SCR_H - 1 - y) * SCR_W + x] = 0;
+            s_fb[(SCR_H - 1 - y) * SCR_W + (SCR_W - 1 - x)] = 0;
+        }
+    }
+}
+
 int gfx_utf8_next(const char *s, uint32_t *cp)
 {
     const unsigned char *p = (const unsigned char *)s;

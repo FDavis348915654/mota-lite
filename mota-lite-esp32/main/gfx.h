@@ -42,16 +42,20 @@ static inline uint16_t rgb565_pack(int r, int g, int b)
 #define COL_END_DEAD  RGB565(0x2A, 0x08, 0x0C)
 #define COL_END_WIN   RGB565(0x08, 0x24, 0x16)
 
-// 布局（与 480x480 方案一致）
+// 布局：7x9 视口 + 卷轴相机。
+// 格子 42px（素材 28px 按 1.5 倍最近邻放大）——480 宽的小屏上，28px 一格只有 3.2mm，
+// 手指点不准；42px 约 4.8mm，配合相机跟随仍然能看清整层结构。
 #define MAP_COLS      13
 #define MAP_ROWS      15
-#define TILE_PX       28
-#define MAP_W         (MAP_COLS * TILE_PX)   // 364
-#define MAP_H         (MAP_ROWS * TILE_PX)   // 420
-#define SIDE_X        MAP_W                  // 364
-#define SIDE_W        (SCR_W - MAP_W)        // 116
-#define BAR_Y         MAP_H                  // 420
-#define BAR_H         (SCR_H - MAP_H)        // 60
+#define TILE_PX       42
+#define VIEW_COLS     7
+#define VIEW_ROWS     9
+#define MAP_W         (VIEW_COLS * TILE_PX)   // 294，地图视口宽
+#define MAP_H         (VIEW_ROWS * TILE_PX)   // 378，地图视口高
+#define SIDE_X        MAP_W                   // 294
+#define SIDE_W        (SCR_W - MAP_W)         // 186
+#define BAR_Y         MAP_H                   // 378
+#define BAR_H         (SCR_H - MAP_H)         // 102
 
 void gfx_init(void);
 
@@ -65,6 +69,14 @@ void gfx_rect(int x, int y, int w, int h, uint16_t c);
 
 // 画 28x28 精灵帧，alpha=0 的像素跳过
 void gfx_sprite(int x, int y, int sprite_index);
+
+// 按 size x size 最近邻放大绘制（地图格子 42px 用），仍走 28px 源图集
+void gfx_sprite_scaled(int x, int y, int sprite_index, int size);
+
+
+// 把四角圆角外的像素涂成纯黑。屏幕有物理圆角，内容画进去会被切；
+// 主动涂黑让切口看起来是"圆角窗口"而不是"缺一块"（AMOLED 黑色即熄灭）。
+void gfx_mask_rounded(int radius);
 
 // UTF-8 文本，返回实际绘制宽度；超过 max_w 停止（不换行）
 int gfx_text(int x, int y, const char *utf8, uint16_t color, int max_w);

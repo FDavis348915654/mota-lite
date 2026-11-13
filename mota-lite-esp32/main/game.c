@@ -43,14 +43,16 @@ extern const uint8_t bundle_end[] asm("_binary_logic_bundle_js_end");
 #define NVS_KEY_WINS  "rwins"
 #define NVS_KEY_MIN   "rmin"
 
-// ---- 布局（480x480）----
-#define SIDE_HUD_X    (SIDE_X + 6)
-#define BTN_X0        (SIDE_X + 4)
-#define BTN_W         52
-#define BTN_H         30
-#define BTN_GAP_X     4
-#define BTN_GAP_Y     4
-#define BTN_Y0        284
+// ---- 布局（480x480：7x9 地图视口 + 186px 侧栏 + 102px 底栏）----
+#define HUD_X         (SIDE_X + 4)     // 298
+#define HUD_R         (SCR_W - 26)     // 454 圆角安全线：实测 476 处会被切
+#define HUD_W         (HUD_R - HUD_X)  // 156
+#define BTN_X0        (SIDE_X + 4)     // 298
+#define BTN_W         ((HUD_W - 6) / 2) // 75
+#define BTN_H         52
+#define BTN_GAP_X     6
+#define BTN_GAP_Y     6
+#define BTN_Y0        150
 #define BTN_COLS      2
 
 // ---- 覆盖层 ----
@@ -177,6 +179,29 @@ static struct {
     TickType_t at;
 } s_pending;
 
+// 卷轴相机：像素级平滑跟随，目标由英雄位置决定并夹在塔边界内
+static int s_cam_px = 0, s_cam_py = 0;
+static int s_cam_tx = 0, s_cam_ty = 0;
+static int s_cam_floor = -1;      // -1 表示下一帧强制对齐（换层/读档/新局）
+
+// 选中格：点过的格子留一个框，直到下一次操作（对应 web 的点击反馈）
+static int s_sel_c = -1, s_sel_r = -1;
+
+// 按钮按下态：触发后 180ms 内高亮，对应 web 的 .action-btn:active
+static int s_btn_hot = -1;
+static TickType_t s_btn_hot_until = 0;
+
+// 当前按下点（只用于按钮的"按住"高亮，不再画圆圈）
+static struct {
+    bool down;
+    int x, y;
+} s_touch;
+
+// 刚点过的按钮矩形：抬手后保持 260ms 高亮，快速轻点也看得见
+static int s_hot_x, s_hot_y, s_hot_w, s_hot_h;
+static TickType_t s_hot_until = 0;
+static bool s_hot_valid = false;
+
 static good_t s_shop_goods[6];
 static int s_shop_n = 0;
 static good_t s_mage_goods[4];
@@ -206,6 +231,48 @@ static void open_mage(void);
 // ---------------- 基础 ----------------
 
 static void mark_dirty(void) { s_dirty_frame = true; }
+
+// ---- 按钮交互：按住即亮，抬手后保持 260ms ----
+static bool rect_has(int x, int y, int w, int h, int px, int py)
+{
+    return px >= x && px < x + w && py >= y && py < y + h;
+}
+
+static void flash_btn(int x, int y, int w, int h)
+{
+    s_hot_x = x;
+    s_hot_y = y;
+    s_hot_w = w;
+    s_hot_h = h;
+    s_hot_until = xTaskGetTickCount() + pdMS_TO_TICKS(260);
+    s_hot_valid = true;
+}
+
+// 这个矩形当前是否该画成"按下"
+static bool btn_hot(int x, int y, int w, int h)
+{
+    if (s_touch.down && rect_has(x, y, w, h, s_touch.x, s_touch.y)) {
+        return true;
+    }
+    if (!s_hot_valid || xTaskGetTickCount() >= s_hot_until) {
+        return false;
+    }
+    return s_hot_x == x && s_hot_y == y && s_hot_w == w && s_hot_h == h;
+}
+
+// 画一块按钮底板，按住/刚点过时高亮
+static void draw_btn(int x, int y, int w, int h, uint16_t border)
+{
+    bool hot = btn_hot(x, y, w, h);
+    gfx_fill(x, y, w, h, hot ? COL_HILITE : COL_BTN);
+    gfx_rect(x, y, w, h, hot ? COL_TEXT : border);
+}
+
+// 列表行底板（商店/法师/设置），同样有按下态
+static void draw_row(int x, int y, int w, int h)
+{
+    gfx_fill(x, y, w, h, btn_hot(x, y, w, h) ? COL_HILITE : COL_ROW);
+}
 
 static void set_msg(const char *text)
 {
@@ -653,8 +720,11 @@ static void records_update(void)
 
 // ---------------- 生命周期 ----------------
 
+static void sprite_info_init(void);
+
 void game_init(void)
 {
+    sprite_info_init();
     s_rt = JS_NewRuntime();
     if (!s_rt) {
         ESP_LOGE(TAG, "JS_NewRuntime 失败");
@@ -757,6 +827,8 @@ void game_new(void)
 
     read_hud();
     read_grid();
+    s_cam_floor = -1;   // 强制相机重新对齐
+    s_sel_c = s_sel_r = -1;
     mark_dirty();
 
     ESP_LOGI(TAG, "首局 第%d层 (%d,%d) HP=%d ATK=%d DEF=%d",
@@ -1215,6 +1287,7 @@ static void act_fly(int delta)
     if (!s_ctx) {
         return;
     }
+    int floor_before = s_hud.floor;
     s_act_text[0] = '\0';
     JSValue args[2] = {s_state, JS_NewInt32(s_ctx, delta)};
     JSValue r = JS_Call(s_ctx, s_fn_fly, s_logic, 2, args);
@@ -1225,8 +1298,11 @@ static void act_fly(int delta)
     read_grid();
     bool ok = strstr(s_act_text, "没有") == NULL && strstr(s_act_text, "只能") == NULL;
     audio_play(ok ? "door" : "click");
-    queue_floor_story();
-    show_next_story();
+    // 只有真的换了层才放楼层剧情；否则每按一次升降层都会把当前层介绍重播一遍
+    if (s_hud.floor != floor_before) {
+        queue_floor_story();
+        show_next_story();
+    }
     mark_dirty();
 }
 
@@ -1509,14 +1585,29 @@ static const char *act_label(int a)
     }
 }
 
-static void act_rect(int idx, int *x, int *y)
+// 按钮矩形。idx 是「可见动作」里的下标，action 是动作本身。
+// 「设置」独占最后一行整宽：它最常用又最容易点偏（原来只有 52x30，还贴底边 4px），
+// 加宽后即使手指落在两列之间的缝隙里也能命中。
+static void act_rect(int idx, int action, int total, int *x, int *y, int *w, int *h)
 {
+    *h = BTN_H;
+    if (action == ACT_SETTINGS) {
+        // 独占一行：放在其他按钮用完的行之后，否则会把同一行的「新游」整块盖住
+        *x = BTN_X0;
+        *y = BTN_Y0 + (total / BTN_COLS) * (BTN_H + BTN_GAP_Y);
+        *w = BTN_W * 2 + BTN_GAP_X;
+        return;
+    }
     *x = BTN_X0 + (idx % BTN_COLS) * (BTN_W + BTN_GAP_X);
     *y = BTN_Y0 + (idx / BTN_COLS) * (BTN_H + BTN_GAP_Y);
+    *w = BTN_W;
 }
 
 static void do_action(int a)
 {
+    s_btn_hot = a;
+    s_btn_hot_until = xTaskGetTickCount() + pdMS_TO_TICKS(260);
+    mark_dirty();
     switch (a) {
     case ACT_FLYUP:
         act_fly(1);
@@ -1561,34 +1652,159 @@ static void do_action(int a)
 
 // ---------------- 渲染 ----------------
 
+// 选中格：2px 亮框 + 四角短标记，压在格子上但不挡内容
+static void render_sel(void)
+{
+    if (s_sel_c < 0 || s_sel_r < 0) {
+        return;
+    }
+    int x = s_sel_c * TILE_PX - s_cam_px;
+    int y = s_sel_r * TILE_PX - s_cam_py;
+    if (x + TILE_PX <= 0 || y + TILE_PX <= 0 || x >= MAP_W || y >= MAP_H) {
+        return;
+    }
+    const uint16_t c = RGB565(0x7C, 0xC8, 0xF0);
+    gfx_rect(x + 1, y + 1, TILE_PX - 2, TILE_PX - 2, c);
+    gfx_rect(x + 2, y + 2, TILE_PX - 4, TILE_PX - 4, c);
+    // 四角加粗，缩小后也能一眼看出选中哪格
+    const int L = 10;
+    gfx_fill(x + 1, y + 1, L, 3, c);
+    gfx_fill(x + 1, y + 1, 3, L, c);
+    gfx_fill(x + TILE_PX - 1 - L, y + 1, L, 3, c);
+    gfx_fill(x + TILE_PX - 4, y + 1, 3, L, c);
+    gfx_fill(x + 1, y + TILE_PX - 4, L, 3, c);
+    gfx_fill(x + 1, y + TILE_PX - 1 - L, 3, L, c);
+    gfx_fill(x + TILE_PX - 1 - L, y + TILE_PX - 4, L, 3, c);
+    gfx_fill(x + TILE_PX - 4, y + TILE_PX - 1 - L, 3, L, c);
+}
+
+// ---------------- 卷轴相机 ----------------
+
+// 目标位置：英雄尽量居中，靠近塔边缘时夹紧，避免露出地图外
+static void cam_clamp_target(void)
+{
+    int maxx = (GRID_COLS - VIEW_COLS) * TILE_PX;
+    int maxy = (GRID_ROWS - VIEW_ROWS) * TILE_PX;
+    int tx = s_hud.x * TILE_PX + TILE_PX / 2 - MAP_W / 2;
+    int ty = s_hud.y * TILE_PX + TILE_PX / 2 - MAP_H / 2;
+    if (tx < 0) {
+        tx = 0;
+    }
+    if (tx > maxx) {
+        tx = maxx;
+    }
+    if (ty < 0) {
+        ty = 0;
+    }
+    if (ty > maxy) {
+        ty = maxy;
+    }
+    s_cam_tx = tx;
+    s_cam_ty = ty;
+}
+
+// 相机跟随与 web 一致：按整格对齐、直接跳，不做插值。
+// web 里是 camX = clamp(state.x - floor(cols/2)) 然后 CSS translate，
+// 英雄每走一格镜头整体平移一格；插值反而会让像素画在滚动时糊掉。
+static bool cam_step(void)
+{
+    cam_clamp_target();
+    if (s_cam_px == s_cam_tx && s_cam_py == s_cam_ty) {
+        return false;
+    }
+    s_cam_px = s_cam_tx;
+    s_cam_py = s_cam_ty;
+    return true;
+}
+
+static void cam_snap(void)
+{
+    cam_step();
+}
+
+// 某些帧是整格贴图（墙/门/楼梯），某些是"镂空"的（道具/怪物/NPC/英雄）。
+// 后者必须先铺一层地板，否则露出的就是接近黑色的背景，看起来像给精灵套了黑框。
+static bool s_spr_overlay[SPRITE_COUNT];
+
+static void sprite_info_init(void)
+{
+    for (int i = 0; i < SPRITE_COUNT; i++) {
+        const uint8_t *m = g_sprite_alpha + (size_t)i * SPRITE_ALPHA_BYTES;
+        bool overlay = false;
+        for (int k = 0; k < SPRITE_TILE && !overlay; k++) {
+            int idx[4] = {
+                k,                                        // 上边
+                (SPRITE_TILE - 1) * SPRITE_TILE + k,      // 下边
+                k * SPRITE_TILE,                          // 左边
+                k * SPRITE_TILE + SPRITE_TILE - 1,        // 右边
+            };
+            for (int j = 0; j < 4; j++) {
+                int p = idx[j];
+                if (!((m[p >> 3] >> (7 - (p & 7))) & 1)) {
+                    overlay = true;
+                    break;
+                }
+            }
+        }
+        s_spr_overlay[i] = overlay;
+    }
+}
+
 static void render_map(void)
 {
-    for (int y = 0; y < GRID_ROWS; y++) {
-        for (int x = 0; x < GRID_COLS; x++) {
-            char ch = s_anim.active ? s_anim.grid[y][x] : s_grid[y][x];
+    const int ox = s_cam_px % TILE_PX;
+    const int oy = s_cam_py % TILE_PX;
+    const int c0 = s_cam_px / TILE_PX;
+    const int r0 = s_cam_py / TILE_PX;
+
+    // 多画一行一列盖住滚动中的边缘；溢出到侧栏/底栏的部分随后会被它们覆盖
+    for (int vy = 0; vy <= VIEW_ROWS; vy++) {
+        int gy = r0 + vy;
+        if (gy >= GRID_ROWS) {
+            break;
+        }
+        int sy = vy * TILE_PX - oy;
+        for (int vx = 0; vx <= VIEW_COLS; vx++) {
+            int gx = c0 + vx;
+            if (gx >= GRID_COLS) {
+                break;
+            }
+            char ch = s_anim.active ? s_anim.grid[gy][gx] : s_grid[gy][gx];
             if (!ch) {
                 continue;
             }
-            gfx_sprite(x * TILE_PX, y * TILE_PX, tile_sprite_or_fallback((unsigned char)ch));
+            int spr = tile_sprite_or_fallback((unsigned char)ch);
+            int dx = vx * TILE_PX - ox;
+            if (spr >= 0 && spr < SPRITE_COUNT && s_spr_overlay[spr]) {
+                gfx_sprite_scaled(dx, sy, SPR_FLOOR, TILE_PX);  // 镂空帧的地板底
+            }
+            gfx_sprite_scaled(dx, sy, spr, TILE_PX);
         }
     }
 
     if (!s_anim.active) {
-        gfx_sprite(s_hud.x * TILE_PX, s_hud.y * TILE_PX, s_hero_frame ? SPR_HERO_B : SPR_HERO_A);
+        int hx = s_hud.x * TILE_PX - s_cam_px;
+        int hy = s_hud.y * TILE_PX - s_cam_py;
+        gfx_sprite_scaled(hx, hy, SPR_FLOOR, TILE_PX);
+        gfx_sprite_scaled(hx, hy, s_hero_frame ? SPR_HERO_B : SPR_HERO_A, TILE_PX);
         return;
     }
 
-    gfx_sprite(s_anim.from_x * TILE_PX, s_anim.from_y * TILE_PX, SPR_HERO_A);
+    gfx_sprite_scaled(s_anim.from_x * TILE_PX - s_cam_px, s_anim.from_y * TILE_PX - s_cam_py,
+                      SPR_FLOOR, TILE_PX);
+    gfx_sprite_scaled(s_anim.from_x * TILE_PX - s_cam_px, s_anim.from_y * TILE_PX - s_cam_py,
+                      SPR_HERO_A, TILE_PX);
 
     int64_t el = (int64_t)(xTaskGetTickCount() - s_anim.start) * portTICK_PERIOD_MS;
     if (el < ANIM_DASH_MS) {
         float p = (float)el / (float)ANIM_DASH_MS;
         int px = (int)(s_anim.from_x * TILE_PX + (s_anim.to_x - s_anim.from_x) * TILE_PX * p);
         int py = (int)(s_anim.from_y * TILE_PX + (s_anim.to_y - s_anim.from_y) * TILE_PX * p);
-        gfx_sprite(px, py, SPR_HERO_B);
+        gfx_sprite_scaled(px - s_cam_px, py - s_cam_py, SPR_HERO_B, TILE_PX);
     }
     if (el >= 100) {
-        gfx_sprite(s_anim.to_x * TILE_PX, s_anim.to_y * TILE_PX, SPR_FX_HIT);
+        gfx_sprite_scaled(s_anim.to_x * TILE_PX - s_cam_px, s_anim.to_y * TILE_PX - s_cam_py,
+                          SPR_FX_HIT, TILE_PX);
 
         char dbuf[24];
         if (s_anim.dmg > 0) {
@@ -1598,9 +1814,9 @@ static void render_map(void)
         }
         int dw = gfx_text20_width(dbuf);
         float p = el > ANIM_MS ? 1.0f : (float)el / (float)ANIM_MS;
-        int dy = (int)(-18.0f * p);
-        int dx = s_anim.to_x * TILE_PX + (TILE_PX - dw) / 2;
-        int dypos = s_anim.to_y * TILE_PX + 2 + dy;
+        int dy = (int)(-22.0f * p);
+        int dx = s_anim.to_x * TILE_PX - s_cam_px + (TILE_PX - dw) / 2;
+        int dypos = s_anim.to_y * TILE_PX - s_cam_py + 2 + dy;
         if (dypos < 0) {
             dypos = 0;
         }
@@ -1608,12 +1824,13 @@ static void render_map(void)
     }
 }
 
-static void draw_kv(int y, const char *label, int value, uint16_t color)
+static void draw_kv(int y, int x, int w, const char *label, int value, uint16_t color)
 {
-    gfx_text(SIDE_X + 6, y, label, COL_TEXT_DIM, 24);
+    gfx_text(x, y, label, COL_TEXT_DIM, 28);
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", value);
-    gfx_text20(SIDE_X + 30, y + 3, buf, color, 80);
+    int vw = gfx_text_width(buf);
+    gfx_text(x + w - vw, y, buf, color, w);
 }
 
 static void render_side(void)
@@ -1623,24 +1840,29 @@ static void render_side(void)
 
     char buf[32];
     snprintf(buf, sizeof(buf), "%dF", s_hud.floor + 1);
-    gfx_text20(SIDE_X + 6, 6, buf, COL_TEXT, 60);
+    gfx_text20(HUD_X + 2, 8, buf, COL_TEXT, 60);
 
-    draw_kv(30, "血", s_hud.hp, COL_HP);
-    draw_kv(58, "攻", s_hud.atk, COL_ATK);
-    draw_kv(86, "防", s_hud.def, COL_DEF);
-    draw_kv(114, "金", s_hud.gold, COL_GOLD);
-    draw_kv(142, "黄", s_hud.key_y, COL_KEY_Y);
-    draw_kv(170, "蓝", s_hud.key_b, COL_KEY_B);
-    draw_kv(198, "红", s_hud.key_r, COL_KEY_R);
-    draw_kv(226, "步", s_steps, COL_TEXT_DIM);
-    draw_kv(254, "经", s_hud.exp, COL_TEXT_DIM);
+    snprintf(buf, sizeof(buf), "步 %d", s_steps);
+    int sw = gfx_text_width(buf);
+    // 圆角：右上角还是压到步数，往左让到 x=416（离边 64px）
+    gfx_text(SCR_W - 64 - sw, 8, buf, COL_TEXT_DIM, 110);
+
+    // 数值统一 24px，比原来 20px 更适合小屏阅读
+    draw_kv(28, HUD_X, HUD_W, "血", s_hud.hp, COL_HP);
+    draw_kv(58, HUD_X, 72, "攻", s_hud.atk, COL_ATK);
+    draw_kv(58, HUD_X + 84, 72, "防", s_hud.def, COL_DEF);
+    draw_kv(88, HUD_X, 72, "金", s_hud.gold, COL_GOLD);
+    draw_kv(88, HUD_X + 84, 72, "经", s_hud.exp, COL_TEXT_DIM);
+    draw_kv(118, HUD_X, 48, "黄", s_hud.key_y, COL_KEY_Y);
+    draw_kv(118, HUD_X + 54, 48, "蓝", s_hud.key_b, COL_KEY_B);
+    draw_kv(118, HUD_X + 108, 48, "红", s_hud.key_r, COL_KEY_R);
 
     int acts[8];
     int n = visible_actions(acts);
     for (int i = 0; i < n; i++) {
-        int x, y;
-        act_rect(i, &x, &y);
+        int x, y, w, h;
         int a = acts[i];
+        act_rect(i, a, n, &x, &y, &w, &h);
 
         uint16_t border = COL_BORDER;
         uint16_t fg = COL_TEXT;
@@ -1659,11 +1881,20 @@ static void render_side(void)
             fg = COL_GOLD;
         }
 
-        gfx_fill(x, y, BTN_W, BTN_H, COL_BTN);
-        gfx_rect(x, y, BTN_W, BTN_H, border);
+        // 按下态：手指还压在这个按钮上就先亮起来（web 的 :active），
+        // 抬手命中后由 s_btn_hot 再保持 260ms，快速轻点也有反馈
+        bool pressing = s_touch.down && s_touch.x >= x && s_touch.x < x + w &&
+                        s_touch.y >= y && s_touch.y < y + h;
+        bool hot = pressing || (a == s_btn_hot && xTaskGetTickCount() < s_btn_hot_until);
+        gfx_fill(x, y, w, h, hot ? COL_HILITE : COL_BTN);
+        gfx_rect(x, y, w, h, border);
+        if (hot) {
+            gfx_rect(x + 2, y + 2, w - 4, h - 4, COL_TEXT);
+            fg = COL_TEXT;
+        }
         const char *lb = act_label(a);
-        int w = gfx_text_width(lb);
-        gfx_text(x + (BTN_W - w) / 2, y + 3, lb, fg, BTN_W);
+        int tw = gfx_text_width(lb);
+        gfx_text(x + (w - tw) / 2, y + (h - 24) / 2, lb, fg, w);
     }
 }
 
@@ -1680,7 +1911,9 @@ static void render_bar(void)
     gfx_fill(0, BAR_Y, SCR_W, 1, COL_BORDER);
 
     const char *msg = s_msg[0] ? s_msg : idle_hint();
-    gfx_text_wrap(8, BAR_Y + 4, msg, COL_TEXT, SCR_W - 16, 26, 2);
+    // 底栏 102px 高，容得下 3 行 24px，长消息不再被截成 "..."
+    // 左下角同样有圆角：左右各留 22px，纵向从 12px 起排
+    gfx_text_wrap(22, BAR_Y + 12, msg, COL_TEXT, SCR_W - 44, 28, 3);
 }
 
 static void panel_begin(const char *title, const char *sub)
@@ -1701,8 +1934,7 @@ static void render_story(void)
     gfx_text_wrap(OV_X + 20, OV_Y + 62, s_ov.body, COL_TEXT, OV_W - 40, 26, 9);
 
     int bx = OV_X + 20, by = OV_Y + OV_H - 56, bw = OV_W - 40, bh = 40;
-    gfx_fill(bx, by, bw, bh, COL_BTN);
-    gfx_rect(bx, by, bw, bh, COL_BORDER);
+    draw_btn(bx, by, bw, bh, COL_BORDER);
     // 字库没有 ▸，用两个汉字 + 手绘三角，避免缺字方块
     const char *cont = "继续";
     int tw = gfx_text_width(cont);
@@ -1725,7 +1957,7 @@ static void render_menu(void)
 
     for (int i = 0; i < s_ov.rows; i++) {
         int y = ROW_Y0 + i * ROW_H;
-        gfx_fill(ROW_X, y, ROW_W, ROW_H - 4, COL_ROW);
+        draw_row(ROW_X, y, ROW_W, ROW_H - 4);
 
         menu_row_t *r = &s_ov.row[i];
         uint16_t main = r->affordable ? COL_TEXT : COL_TEXT_DIM;
@@ -1739,8 +1971,7 @@ static void render_menu(void)
     }
 
     int bx = ROW_X, by = OV_Y + OV_H - 62, bw = ROW_W, bh = 40;
-    gfx_fill(bx, by, bw, bh, COL_BTN);
-    gfx_rect(bx, by, bw, bh, COL_BORDER);
+    draw_btn(bx, by, bw, bh, COL_BORDER);
     gfx_text_center(bx + bw / 2, by + 8, "离开", COL_TEXT);
 }
 
@@ -1801,16 +2032,16 @@ static void render_settings(void)
     char buf[64];
     int y = ROW_Y0;
     snprintf(buf, sizeof(buf), "音效：%s", audio_muted() ? "关" : "开");
-    gfx_fill(ROW_X, y, ROW_W, 42, COL_ROW);
+    draw_row(ROW_X, y, ROW_W, 42);
     gfx_text(ROW_X + 12, y + 9, buf, COL_TEXT, ROW_W - 24);
 
     y += 48;
     snprintf(buf, sizeof(buf), "战斗动画：%s", s_anim_on ? "开" : "关");
-    gfx_fill(ROW_X, y, ROW_W, 42, COL_ROW);
+    draw_row(ROW_X, y, ROW_W, 42);
     gfx_text(ROW_X + 12, y + 9, buf, COL_TEXT, ROW_W - 24);
 
     y += 48;
-    gfx_fill(ROW_X, y, ROW_W, 42, COL_ROW);
+    draw_row(ROW_X, y, ROW_W, 42);
     gfx_text(ROW_X + 12, y + 9, "重新开始", COL_HP, ROW_W - 24);
 
     y += 58;
@@ -1823,8 +2054,7 @@ static void render_settings(void)
     }
 
     int bx = ROW_X, by = OV_Y + OV_H - 60, bw = ROW_W, bh = 40;
-    gfx_fill(bx, by, bw, bh, COL_BTN);
-    gfx_rect(bx, by, bw, bh, COL_BORDER);
+    draw_btn(bx, by, bw, bh, COL_BORDER);
     gfx_text_center(bx + bw / 2, by + 8, "关闭", COL_TEXT);
 }
 
@@ -1838,12 +2068,10 @@ static void render_confirm(void)
     gfx_text_wrap(x + 20, y + 64, s_ov.body, COL_TEXT_DIM, w - 40, 26, 4);
 
     int bw = 150, bh = 40;
-    gfx_fill(x + 24, y + h - 60, bw, bh, COL_BTN);
-    gfx_rect(x + 24, y + h - 60, bw, bh, COL_HP);
+    draw_btn(x + 24, y + h - 60, bw, bh, COL_HP);
     gfx_text_center(x + 24 + bw / 2, y + h - 52, "覆盖并开始", COL_HP);
 
-    gfx_fill(x + w - 24 - bw, y + h - 60, bw, bh, COL_BTN);
-    gfx_rect(x + w - 24 - bw, y + h - 60, bw, bh, COL_BORDER);
+    draw_btn(x + w - 24 - bw, y + h - 60, bw, bh, COL_BORDER);
     gfx_text_center(x + w - 24 - bw / 2, y + h - 52, "取消", COL_TEXT);
 }
 
@@ -1875,6 +2103,7 @@ void game_render(void)
 {
     gfx_clear(COL_BG);
     render_map();
+    render_sel();
     render_side();
     render_bar();
 
@@ -1908,6 +2137,10 @@ void game_render(void)
             gfx_rect(i, i, SCR_W - i * 2, SCR_H - i * 2, COL_HILITE);
         }
     }
+
+    // 最后一步：把四角圆角外的像素涂黑（物理屏是圆角，AMOLED 黑=熄灭）
+    // 46px 是按实机照片反推的半径：480 宽屏上约占 10%
+    gfx_mask_rounded(46);
 }
 
 bool game_flash_active(void)
@@ -1929,11 +2162,17 @@ bool game_screen_to_tile(int px, int py, int *col, int *row)
     if (px < 0 || py < 0 || px >= MAP_W || py >= MAP_H) {
         return false;
     }
+    // 视口坐标 + 相机偏移 = 全图坐标
+    int c = (px + s_cam_px) / TILE_PX;
+    int r = (py + s_cam_py) / TILE_PX;
+    if (c < 0 || c >= GRID_COLS || r < 0 || r >= GRID_ROWS) {
+        return false;
+    }
     if (col) {
-        *col = px / TILE_PX;
+        *col = c;
     }
     if (row) {
-        *row = py / TILE_PX;
+        *row = r;
     }
     return true;
 }
@@ -1944,6 +2183,7 @@ static void tap_overlay(int px, int py)
     case OV_STORY: {
         int bx = OV_X + 20, by = OV_Y + OV_H - 56, bw = OV_W - 40, bh = 40;
         if (px >= bx && px < bx + bw && py >= by && py < by + bh) {
+            flash_btn(bx, by, bw, bh);
             s_ov.kind = OV_NONE;
             audio_play("click");
             mark_dirty();
@@ -1957,6 +2197,7 @@ static void tap_overlay(int px, int py)
     case OV_MAGE: {
         int by = OV_Y + OV_H - 62;
         if (py >= by && py < by + 40 && px >= ROW_X && px < ROW_X + ROW_W) {
+            flash_btn(ROW_X, by, ROW_W, 40);
             s_ov.kind = OV_NONE;
             audio_play("click");
             mark_dirty();
@@ -1970,6 +2211,7 @@ static void tap_overlay(int px, int py)
         if (py < ROW_Y0 || idx < 0 || idx >= s_ov.rows) {
             return;
         }
+        flash_btn(ROW_X, ROW_Y0 + idx * ROW_H, ROW_W, ROW_H - 4);
         if (s_ov.kind == OV_SHOP) {
             buy_shop(idx);
         } else {
@@ -1986,6 +2228,7 @@ static void tap_overlay(int px, int py)
     case OV_SETTINGS: {
         int y = ROW_Y0;
         if (py >= y && py < y + 42) {
+            flash_btn(ROW_X, y, ROW_W, 42);
             audio_toggle_mute();
             audio_play("click");
             mark_dirty();
@@ -1993,6 +2236,7 @@ static void tap_overlay(int px, int py)
         }
         y += 48;
         if (py >= y && py < y + 42) {
+            flash_btn(ROW_X, y, ROW_W, 42);
             s_anim_on = !s_anim_on;
             audio_play("click");
             mark_dirty();
@@ -2000,6 +2244,7 @@ static void tap_overlay(int px, int py)
         }
         y += 48;
         if (py >= y && py < y + 42) {
+            flash_btn(ROW_X, y, ROW_W, 42);
             s_ov.kind = OV_CONFIRM;
             s_ov.confirm_action = ACT_NEWGAME;
             snprintf(s_ov.title, sizeof(s_ov.title), "开始新游戏？");
@@ -2011,6 +2256,7 @@ static void tap_overlay(int px, int py)
         }
         int by = OV_Y + OV_H - 60;
         if (py >= by && py < by + 40) {
+            flash_btn(ROW_X, by, ROW_W, 40);
             s_ov.kind = OV_NONE;
             audio_play("click");
             mark_dirty();
@@ -2024,10 +2270,12 @@ static void tap_overlay(int px, int py)
         int by = y + h - 60;
         if (py >= by && py < by + 40) {
             if (px >= x + 24 && px < x + 24 + 150) {
+                flash_btn(x + 24, by, 150, 40);
                 s_ov.kind = OV_NONE;
                 game_restart();
                 mark_dirty();
             } else if (px >= x + w - 24 - 150 && px < x + w - 24) {
+                flash_btn(x + w - 24 - 150, by, 150, 40);
                 s_ov.kind = OV_NONE;
                 audio_play("click");
                 mark_dirty();
@@ -2045,13 +2293,23 @@ static void tap_side(int px, int py)
     int acts[8];
     int n = visible_actions(acts);
     for (int i = 0; i < n; i++) {
-        int x, y;
-        act_rect(i, &x, &y);
-        if (px >= x && px < x + BTN_W && py >= y && py < y + BTN_H) {
+        int x, y, w, h;
+        act_rect(i, acts[i], n, &x, &y, &w, &h);
+        if (px >= x && px < x + w && py >= y && py < y + h) {
             do_action(acts[i]);
             return;
         }
     }
+}
+
+// 触摸落点反馈。input.c 在按下/抬起各调一次；
+// 串口注入（diag tap）也会调，所以自动截图里同样能看到圆圈。
+void game_touch_state(int x, int y, bool down)
+{
+    s_touch.x = x;
+    s_touch.y = y;
+    s_touch.down = down;
+    mark_dirty();
 }
 
 void game_tap(int px, int py)
@@ -2079,7 +2337,12 @@ void game_tap(int px, int py)
     }
 
     stop_auto();
-    int col = px / TILE_PX, row = py / TILE_PX;
+    int col = (px + s_cam_px) / TILE_PX, row = (py + s_cam_py) / TILE_PX;
+    if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) {
+        return;
+    }
+    s_sel_c = col;
+    s_sel_r = row;
     if (col == s_hud.x && row == s_hud.y) {
         return;
     }
@@ -2112,10 +2375,11 @@ int game_floor(void)
 
 void game_debug_state(char *buf, int n)
 {
-    snprintf(buf, n, "第%d层 (%d,%d) HP%d A%d D%d G%d Y%d B%d R%d 步%d 结束%d flags%u 覆盖%d",
+    snprintf(buf, n, "第%d层 (%d,%d) HP%d A%d D%d G%d Y%d B%d R%d 步%d 结束%d flags%u 覆盖%d cam%d,%d touch%d@%d,%d",
              s_hud.floor + 1, s_hud.x, s_hud.y, s_hud.hp, s_hud.atk, s_hud.def,
              s_hud.gold, s_hud.key_y, s_hud.key_b, s_hud.key_r, s_steps,
-             s_hud.ended, (unsigned)s_hud.flags, (int)s_ov.kind);
+             s_hud.ended, (unsigned)s_hud.flags, (int)s_ov.kind,
+             s_cam_px, s_cam_py, (int)s_touch.down, s_touch.x, s_touch.y);
 }
 
 static TickType_t s_anim_last_frame = 0;
@@ -2123,6 +2387,28 @@ static TickType_t s_anim_last_frame = 0;
 void game_tick(void)
 {
     TickType_t now = xTaskGetTickCount();
+
+    // 相机：换层/读档后先硬对齐，其余时间平滑跟随
+    if (s_cam_floor != s_hud.floor) {
+        s_cam_floor = s_hud.floor;
+        cam_snap();
+        mark_dirty();
+    } else {
+        cam_clamp_target();
+        if (cam_step()) {
+            mark_dirty();
+        }
+    }
+
+    if (s_btn_hot >= 0 && now >= s_btn_hot_until) {
+        s_btn_hot = -1;
+        mark_dirty();
+    }
+
+    if (s_hot_valid && now >= s_hot_until) {
+        s_hot_valid = false;
+        mark_dirty();
+    }
 
     if (s_dirty_save) {
         s_dirty_save = false;
@@ -2237,6 +2523,8 @@ bool game_load_text(const char *text)
     s_steps = 0;
     s_anim.active = false;
     stop_auto();
+    s_cam_floor = -1;
+    s_sel_c = s_sel_r = -1;
     save_to_nvs();
     mark_dirty();
     ESP_LOGI(TAG, "载入存档串 OK：第%d层 (%d,%d) HP=%d", s_hud.floor + 1, s_hud.x, s_hud.y, s_hud.hp);

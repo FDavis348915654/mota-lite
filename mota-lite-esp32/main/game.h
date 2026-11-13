@@ -31,6 +31,9 @@ bool game_flash_active(void);
 // 主循环用：自上次调用以来是否需要重绘（行走/战斗动画/弹层都会置位）
 bool game_needs_render(void);
 
+// 记录当前按下点，供按钮"按住"高亮使用（不再画圆圈）
+void game_touch_state(int x, int y, bool down);
+
 // 屏幕坐标 -> 地图格；越界返回 false
 bool game_screen_to_tile(int px, int py, int *col, int *row);
 

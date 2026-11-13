@@ -20,6 +20,12 @@ static const char *TAG = "input";
 #define SCREEN_IDLE_MS 120000
 
 static bool s_touch_down = false;
+static int s_touch_x = 0, s_touch_y = 0;
+static int s_press_x = 0, s_press_y = 0;   // 按下点，用来判断是否算一次点击
+static bool s_woke = false;                // 这一下只用于唤醒，抬起时不再触发操作
+
+// 抬手与按下点的允许偏移：约 3.4mm，抖动不会误触，滑动则算拖拽
+#define TAP_SLOP 16
 static bool s_key_down = false;
 static TickType_t s_last_active = 0;
 
@@ -41,16 +47,39 @@ bool input_poll(void)
     }
 
     bool down = board_touch_read(&x, &y);
+    if (down) {
+        s_touch_x = x;
+        s_touch_y = y;
+    }
     if (down && !s_touch_down) {
+        // 按下：只记录起点并给反馈，不产生操作（对齐 web 的 pointerdown / :active）
+        s_press_x = x;
+        s_press_y = y;
+        s_woke = false;
+        input_note_activity();
         if (!board_screen_is_on()) {
-            // 熄屏后的第一下只负责点亮，不送进游戏，避免黑屏误触走错格
+            // 熄屏后的第一下只负责点亮，抬起时也不触发操作，避免黑屏误触走错格
             ESP_LOGI(TAG, "触摸唤醒 (%d,%d)", x, y);
-            input_note_activity();
-        } else {
-            ESP_LOGD(TAG, "触摸 (%d,%d)", x, y);
-            game_tap(x, y);
-            input_note_activity();
+            s_woke = true;
         }
+        game_touch_state(x, y, true);
+        changed = true;
+    } else if (!down && s_touch_down) {
+        // 抬起：位移在阈值内才算点击（对齐 web 的 click）
+        game_touch_state(s_touch_x, s_touch_y, false);
+        int dx = s_touch_x - s_press_x;
+        int dy = s_touch_y - s_press_y;
+        if (dx < 0) {
+            dx = -dx;
+        }
+        if (dy < 0) {
+            dy = -dy;
+        }
+        if (!s_woke && dx <= TAP_SLOP && dy <= TAP_SLOP) {
+            ESP_LOGD(TAG, "点击 (%d,%d) 偏移 %d,%d", s_touch_x, s_touch_y, dx, dy);
+            game_tap(s_touch_x, s_touch_y);
+        }
+        s_woke = false;
         changed = true;
     }
     s_touch_down = down;

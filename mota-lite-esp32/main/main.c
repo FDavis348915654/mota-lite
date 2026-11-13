@@ -59,6 +59,8 @@ void app_main(void)
         if (diag_take_tap(&dx, &dy)) {
             input_note_activity();  // 远程注入也算「有人动过」，别被空闲熄屏打断
             game_tap(dx, dy);
+            game_touch_state(dx, dy, true);
+            game_touch_state(dx, dy, false);
         }
         char load_buf[128];
         if (diag_take_load(load_buf, sizeof(load_buf))) {

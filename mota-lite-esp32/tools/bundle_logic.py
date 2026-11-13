@@ -52,7 +52,8 @@ def strip_export(src):
     return re.sub(r"^export\s+", '', src, flags=re.M)
 
 
-def main():
+def build_bundle():
+    """按上游源码生成 bundle 文本（不落盘），供 --check 复用。"""
     tables_src = read('tables.js')
     logic_src = read('logic.js')
     texts_src = read('texts.js')
@@ -112,10 +113,22 @@ def main():
         '})();',
         '',
     ]
-    bundle = '\n'.join(parts)
+    return '\n'.join(parts), tables_exports, logic_exports, merged
+
+
+def main(argv):
+    bundle, tables_exports, logic_exports, merged = build_bundle()
+    out = os.path.join(OUT_DIR, 'logic_bundle.js')
+
+    if '--check' in argv:
+        old = open(out, encoding='utf-8').read() if os.path.exists(out) else ''
+        if old == bundle:
+            print('快照与上游一致 ✓  %d bytes' % len(bundle.encode('utf-8')))
+            return 0
+        print('快照落后于上游 ✗  重新运行不带 --check 的打包')
+        return 1
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    out = os.path.join(OUT_DIR, 'logic_bundle.js')
     with open(out, 'w', encoding='utf-8', newline='\n') as f:
         f.write(bundle)
 
@@ -123,7 +136,8 @@ def main():
     print('logic  导出 %d 个: %s' % (len(logic_exports), ', '.join(logic_exports)))
     print('合并后暴露 %d 个符号' % len(merged))
     print('输出 %s  %d bytes' % (out, len(bundle.encode('utf-8'))))
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main(__import__('sys').argv[1:]))
