@@ -18,3 +18,11 @@ void board_flush(const uint16_t *fb);
 
 // 物理按键（GPIO18），按下返回 true
 bool board_key_pressed(void);
+
+// 开/关屏。AMOLED 没有独立背光：关屏 = 亮度 0 + DISPOFF(0x28)，像素全灭；
+// 帧缓冲内容保留，开屏后原样恢复，不需要重绘。
+void board_screen(bool on);
+bool board_screen_is_on(void);
+
+// 板载 I2C 总线句柄（ES8311 codec 复用同一条总线）
+void *board_i2c_bus(void);

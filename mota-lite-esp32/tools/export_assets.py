@@ -191,16 +191,27 @@ def export_font():
 
         rows = []
         blank = True
+        min_x, max_x = FONT_PX, -1
         for y in range(FONT_PX):
             bits = 0
             for x in range(FONT_PX):
                 if px[x, y] > 110:
                     bits |= (1 << (FONT_PX - 1 - x))
                     blank = False
+                    if x < min_x: min_x = x
+                    if x > max_x: max_x = x
             rows.append(bits)
         if blank and ch != ' ':
             continue
-        table.append((ord(ch), len(glyphs)))
+        # 汉字/全角标点保持 24px 全宽；ASCII 用墨迹宽度 +2，避免「- 5 6 H P」
+        if blank:
+            adv = FONT_PX // 2
+        elif ord(ch) >= 0x80:
+            adv = FONT_PX
+        else:
+            # 用右边界推进（含左侧留白），否则数字会和下一个字重叠
+            adv = max(6, min(FONT_PX, max_x + 2))
+        table.append((ord(ch), len(glyphs), adv))
         glyphs.append(rows)
 
     h = ['// 自动生成，勿手改。%dx%d 点阵字库（simhei 渲染，基线对齐）。' % (FONT_PX, FONT_PX),
@@ -212,8 +223,10 @@ def export_font():
          '// 取字形位图：%d 个 uint32，每个 bit%d..bit0 对应 x0..x%d；缺字返回 0' % (
              FONT_PX, FONT_PX - 1, FONT_PX - 1),
          'const uint32_t *font_glyph(uint32_t codepoint);', '',
-         '// 逐字宽度（等宽，缺字返回 0）',
-         'int font_width(uint32_t codepoint);', '']
+         '// 字形是否存在（缺字返回 0）',
+         'int font_width(uint32_t codepoint);', '',
+         '// 推进宽度：汉字 24，ASCII 按墨迹宽度 +2',
+         'int font_advance(uint32_t codepoint);', '']
     write(os.path.join(OUT, 'font24.h'), '\n'.join(h))
 
     c = ['// 自动生成，勿手改。', '// Created by Davis', '',
@@ -223,11 +236,11 @@ def export_font():
         c.append('    {' + ','.join('0x%06X' % r for r in rows) + '},')
     c.append('};')
     c.append('')
-    c.append('typedef struct { uint16_t cp; uint16_t idx; } font_entry_t;')
+    c.append('typedef struct { uint16_t cp; uint16_t idx; uint8_t adv; } font_entry_t;')
     c.append('')
     c.append('static const font_entry_t g_font_table[FONT_COUNT] = {')
-    for cp, idx in table:
-        c.append('    {0x%04X, %d},' % (cp, idx))
+    for cp, idx, adv in table:
+        c.append('    {0x%04X, %d, %d},' % (cp, idx, adv))
     c.append('};')
     c.append('')
     c.append('const uint32_t *font_glyph(uint32_t cp)')
@@ -247,7 +260,113 @@ def export_font():
     c.append('    return font_glyph(cp) ? FONT_PX : 0;')
     c.append('}')
     c.append('')
+    c.append('int font_advance(uint32_t cp)')
+    c.append('{')
+    c.append('    int lo = 0, hi = FONT_COUNT - 1;')
+    c.append('    while (lo <= hi) {')
+    c.append('        int mid = (lo + hi) >> 1;')
+    c.append('        uint32_t v = g_font_table[mid].cp;')
+    c.append('        if (v == cp) return g_font_table[mid].adv;')
+    c.append('        if (v < cp) lo = mid + 1; else hi = mid - 1;')
+    c.append('    }')
+    c.append('    return 0;')
+    c.append('}')
+    c.append('')
     write(os.path.join(OUT, 'font24.c'), '\n'.join(c))
+
+    return len(glyphs)
+
+
+# ---------------- 小号 ASCII 字库（HUD 数值 / 伤害飘字） ----------------
+
+FONT20_PX = 20
+FONT20_BASELINE = 0.86
+
+
+def export_font20():
+    print('[font20]')
+    chars = [chr(cp) for cp in range(0x20, 0x7F)]
+    font = ImageFont.truetype(FONT_PATH, FONT20_PX)
+    pen_y = int(FONT20_PX * FONT20_BASELINE)
+
+    glyphs, table = [], []
+    for ch in chars:
+        canvas = Image.new('L', (FONT20_PX, FONT20_PX), 0)
+        ImageDraw.Draw(canvas).text((0, pen_y), ch, fill=255, font=font, anchor='ls')
+        px = canvas.load()
+
+        rows = []
+        blank = True
+        min_x, max_x = FONT20_PX, -1
+        for y in range(FONT20_PX):
+            bits = 0
+            for x in range(FONT20_PX):
+                if px[x, y] > 110:
+                    bits |= (1 << (FONT20_PX - 1 - x))
+                    blank = False
+                    if x < min_x: min_x = x
+                    if x > max_x: max_x = x
+            rows.append(bits)
+        if blank and ch != ' ':
+            continue
+        # 变宽推进：数字/标点很窄，按固定 20px 排会变成「2 0 0」
+        adv = 6 if blank else max(6, max_x + 3)
+        table.append((ord(ch), len(glyphs), adv))
+        glyphs.append(rows)
+
+    h = ['// 自动生成，勿手改。%dx%d ASCII 点阵（simhei 渲染）。' % (FONT20_PX, FONT20_PX),
+         '// 用途：HUD 数值与伤害飘字，24px 中文放不下的地方。',
+         '// Created by Davis', '',
+         '#pragma once', '#include <stdint.h>', '',
+         '#define FONT20_PX     %d' % FONT20_PX,
+         '#define FONT20_COUNT  %d' % len(glyphs), '',
+         '// 取字形位图：%d 个 uint32；缺字返回 0' % FONT20_PX,
+         'const uint32_t *font20_glyph(uint32_t codepoint);', '',
+         '// 变宽推进：数字/字母按实际墨迹宽度 + 3px',
+         'int font20_advance(uint32_t codepoint);', '']
+
+
+    write(os.path.join(OUT, 'font20.h'), '\n'.join(h))
+
+    c = ['// 自动生成，勿手改。', '// Created by Davis', '',
+         '#include "font20.h"', '#include <stddef.h>', '',
+         'static const uint32_t g_font20_bitmap[FONT20_COUNT][FONT20_PX] = {']
+    for rows in glyphs:
+        c.append('    {' + ','.join('0x%05X' % r for r in rows) + '},')
+    c.append('};')
+    c.append('')
+    c.append('typedef struct { uint16_t cp; uint16_t idx; uint8_t adv; } font20_entry_t;')
+    c.append('')
+    c.append('static const font20_entry_t g_font20_table[FONT20_COUNT] = {')
+    for cp, idx, adv in table:
+        c.append('    {0x%04X, %d, %d},' % (cp, idx, adv))
+    c.append('};')
+    c.append('')
+    c.append('const uint32_t *font20_glyph(uint32_t cp)')
+    c.append('{')
+    c.append('    int lo = 0, hi = FONT20_COUNT - 1;')
+    c.append('    while (lo <= hi) {')
+    c.append('        int mid = (lo + hi) >> 1;')
+    c.append('        uint32_t v = g_font20_table[mid].cp;')
+    c.append('        if (v == cp) return g_font20_bitmap[g_font20_table[mid].idx];')
+    c.append('        if (v < cp) lo = mid + 1; else hi = mid - 1;')
+    c.append('    }')
+    c.append('    return NULL;')
+    c.append('}')
+    c.append('')
+    c.append('int font20_advance(uint32_t cp)')
+    c.append('{')
+    c.append('    int lo = 0, hi = FONT20_COUNT - 1;')
+    c.append('    while (lo <= hi) {')
+    c.append('        int mid = (lo + hi) >> 1;')
+    c.append('        uint32_t v = g_font20_table[mid].cp;')
+    c.append('        if (v == cp) return g_font20_table[mid].adv;')
+    c.append('        if (v < cp) lo = mid + 1; else hi = mid - 1;')
+    c.append('    }')
+    c.append('    return 0;')
+    c.append('}')
+    c.append('')
+    write(os.path.join(OUT, 'font20.c'), '\n'.join(c))
 
     return len(glyphs)
 
@@ -375,6 +494,7 @@ def export_tilemap(atlas, sprite_names):
 if __name__ == '__main__':
     names, atlas = export_sprites()
     n_glyph = export_font()
+    n_glyph20 = export_font20()
     n_sfx, sfx_bytes = export_sfx()
     n_tile = export_tilemap(atlas, names)
 
@@ -383,5 +503,6 @@ if __name__ == '__main__':
     print('  精灵   %d 帧  %d KB 像素 + %d KB alpha' % (
         len(names), len(names) * TILE * TILE * 2 // 1024, len(names) * TILE * TILE // 8 // 1024))
     print('  字库   %d 字形  %d KB' % (n_glyph, n_glyph * FONT_STRIDE // 1024))
+    print('  小字库 %d 字形  %d KB' % (n_glyph20, n_glyph20 * FONT20_PX * 4 // 1024))
     print('  音效   %d 段  %d KB' % (n_sfx, sfx_bytes // 1024))
     print('  映射   %d 条' % n_tile)

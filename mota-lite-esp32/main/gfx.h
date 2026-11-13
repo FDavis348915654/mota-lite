@@ -36,6 +36,11 @@ static inline uint16_t rgb565_pack(int r, int g, int b)
 #define COL_KEY_B     RGB565(0x50, 0x80, 0xC0)
 #define COL_KEY_R     RGB565(0xC0, 0x50, 0x50)
 #define COL_HILITE    RGB565(0x30, 0x50, 0x70)
+#define COL_OK        RGB565(0x60, 0xC0, 0x90)
+#define COL_ROW       RGB565(0x24, 0x24, 0x32)
+#define COL_BTN       RGB565(0x26, 0x26, 0x36)
+#define COL_END_DEAD  RGB565(0x2A, 0x08, 0x0C)
+#define COL_END_WIN   RGB565(0x08, 0x24, 0x16)
 
 // 布局（与 480x480 方案一致）
 #define MAP_COLS      13
@@ -63,6 +68,15 @@ void gfx_sprite(int x, int y, int sprite_index);
 
 // UTF-8 文本，返回实际绘制宽度；超过 max_w 停止（不换行）
 int gfx_text(int x, int y, const char *utf8, uint16_t color, int max_w);
+
+// 自动折行：按字符断行（英文也不拆词），最多 max_lines 行，剩余内容以 "..." 收尾。
+// 返回实际绘制行数。
+int gfx_text_wrap(int x, int y, const char *utf8, uint16_t color,
+                  int max_w, int line_h, int max_lines);
+
+// 20px ASCII，用于 HUD 数值与伤害飘字（24px 中文在侧栏放不下 4 位数）
+int gfx_text20(int x, int y, const char *ascii, uint16_t color, int max_w);
+int gfx_text20_width(const char *ascii);
 
 // 单行居中
 void gfx_text_center(int cx, int y, const char *utf8, uint16_t color);

@@ -9,8 +9,11 @@ idf_component_register(
         "gfx.c"
         "game.c"
         "input.c"
+        "audio.c"
+        "diag.c"
         "assets/sprites.c"
         "assets/font24.c"
+        "assets/font20.c"
         "assets/sfx.c"
         "assets/tilemap.c"
     INCLUDE_DIRS
@@ -24,6 +27,7 @@ idf_component_register(
 set_source_files_properties(
     "assets/sprites.c"
     "assets/font24.c"
+    "assets/font20.c"
     "assets/sfx.c"
     PROPERTIES COMPILE_OPTIONS "-w"
 )

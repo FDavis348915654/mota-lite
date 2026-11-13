@@ -15,3 +15,6 @@ dependencies:
   espressif/esp_lcd_co5300: "^2.2.0"
   # 触摸：CST9217（CST9220 兼容），微雪适配的驱动
   waveshare/esp_lcd_touch_cst9217: "^1"
+  # 音频：ES8311 codec + 统一 codec 设备层（ES8311 驱动已内置在 esp_codec_dev 里，
+  # 不要再单独拉 espressif/es8311——那个是旧版组件，未声明 IDF6 的组件依赖）
+  espressif/esp_codec_dev: "*"

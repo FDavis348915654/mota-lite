@@ -36,6 +36,11 @@ def strip_import(src):
     return out
 
 
+def assert_no_import(src, name):
+    if re.search(r"^\s*import\s", src, flags=re.M):
+        raise SystemExit('%s 里出现 import，bundle 只支持零依赖数据文件' % name)
+
+
 def collect_exports(src):
     names = re.findall(r"^export\s+(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)", src, flags=re.M)
     if not names:
@@ -50,23 +55,31 @@ def strip_export(src):
 def main():
     tables_src = read('tables.js')
     logic_src = read('logic.js')
+    texts_src = read('texts.js')
+    assert_no_import(texts_src, 'texts.js')
 
     tables_exports = collect_exports(tables_src)
+    texts_exports = collect_exports(texts_src)
     logic_src_wo_import = strip_import(logic_src)
     logic_exports = collect_exports(logic_src_wo_import)
 
     tables_body = strip_export(tables_src)
+    texts_body = strip_export(texts_src)
     logic_body = strip_export(logic_src_wo_import)
 
-    # tables 的导出也要暴露给 C 侧（渲染层要用 TILE_COLOR 之类可后续接入）
-    merged = tables_exports + [n for n in logic_exports if n not in tables_exports]
+    # tables/texts 的导出也要暴露给 C 侧（渲染层要读 FLOORS、剧情文案）
+    merged = tables_exports + [n for n in texts_exports if n not in tables_exports]
+    merged += [n for n in logic_exports if n not in merged]
     ret = ', '.join('%s: %s' % (n, n) for n in merged)
 
     parts = [
-        '// 自动生成，勿手改。来源 mota-lite-web/{tables,logic}.js',
+        '// 自动生成，勿手改。来源 mota-lite-web/{tables,texts,logic}.js',
         '// Created by Davis',
         'var MotaLogic = (function () {',
         "'use strict';",
+        '',
+        '// ===== texts.js（纯数据，零 DOM）=====',
+        texts_body,
         '',
         '// ===== tables.js =====',
         tables_body,

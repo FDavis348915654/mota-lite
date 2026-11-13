@@ -11,5 +11,8 @@
 // 取字形位图：24 个 uint32，每个 bit23..bit0 对应 x0..x23；缺字返回 0
 const uint32_t *font_glyph(uint32_t codepoint);
 
-// 逐字宽度（等宽，缺字返回 0）
+// 字形是否存在（缺字返回 0）
 int font_width(uint32_t codepoint);
+
+// 推进宽度：汉字 24，ASCII 按墨迹宽度 +2
+int font_advance(uint32_t codepoint);

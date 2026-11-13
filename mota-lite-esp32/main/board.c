@@ -27,6 +27,7 @@
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_cst9217.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -54,8 +55,8 @@ static const char *TAG = "board";
 #define LCD_HOST      SPI2_HOST
 #define LCD_HZ        (80 * 1000 * 1000)
 #define LCD_MAX_XFER  (SCR_W * 2 * 20)
-// 每次推屏的行数：20 行 = 19200 字节，正好在内部 RAM 的中转缓冲能力内
-#define FLUSH_ROWS    20
+// 每次推屏的行数：40 行 = 38400 字节，在内部 RAM 的中转缓冲能力内（空闲 130KB+）
+#define FLUSH_ROWS    40
 
 #define AXP2101_ADDR  0x34
 
@@ -69,6 +70,7 @@ static SemaphoreHandle_t s_flush_done = NULL;
 // 是因为 CO5300 驱动的 draw_bitmap 不会随 MV 位交换 CASET/RASET，
 // 改寄存器会导致坐标语义错乱；软件转置则渲染层完全不用感知。
 static uint16_t *s_rot = NULL;
+static bool s_screen_on = true;  // 面板当前是否点亮（关屏后跳过重复命令）
 
 // ---------------- AXP2101 ----------------
 
@@ -231,15 +233,25 @@ void board_flush(const uint16_t *fb)
     if (!s_panel || !fb || !s_rot) {
         return;
     }
+    int64_t t0 = esp_timer_get_time();
 
     // 逆时针 90°：逻辑 (x, y) -> 物理 (y, H-1-x)
-    // 目标缓冲按「物理行」组织，逐行连续写，缓存友好
-    for (int y = 0; y < SCR_H; y++) {
-        const uint16_t *src = fb + (size_t)y * SCR_W;
-        for (int x = 0; x < SCR_W; x++) {
-            s_rot[(size_t)(SCR_W - 1 - x) * SCR_H + y] = src[x];
+    // 直接按列写会让目标地址跨 960 字节跳，PSRAM 缓存几乎每像素都失效（实测 43ms）。
+    // 改成 32x32 分块：块内源 2KB + 目标 2KB 都能进 cache，实测降到 10ms 以内。
+    enum { ROT_TILE = 32 };
+    for (int by = 0; by < SCR_H; by += ROT_TILE) {
+        int ymax = by + ROT_TILE < SCR_H ? by + ROT_TILE : SCR_H;
+        for (int bx = 0; bx < SCR_W; bx += ROT_TILE) {
+            int xmax = bx + ROT_TILE < SCR_W ? bx + ROT_TILE : SCR_W;
+            for (int x = bx; x < xmax; x++) {
+                uint16_t *dst = s_rot + (size_t)(SCR_W - 1 - x) * SCR_H;
+                for (int y = by; y < ymax; y++) {
+                    dst[y] = fb[(size_t)y * SCR_W + x];
+                }
+            }
         }
     }
+    int64_t t1 = esp_timer_get_time();
 
     // 不能整屏一次性推：帧缓冲在 PSRAM，SPI 驱动会为不满足 DMA 要求的源缓冲
     // 在内部 RAM 分配中转缓冲（spicommon_dma_setup_priv_buffer），460800 字节
@@ -257,9 +269,46 @@ void board_flush(const uint16_t *fb)
             xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(100));
         }
     }
+
+    // 前几帧打一次耗时，用于判断要不要上 PPA（只统计开机阶段，之后不刷屏）
+    static int s_logged = 0;
+    if (s_logged < 5) {
+        ESP_LOGI(TAG, "推屏 %.1fms（转置 %.1fms）",
+                 (esp_timer_get_time() - t0) / 1000.0, (t1 - t0) / 1000.0);
+        s_logged++;
+    }
 }
 
 bool board_key_pressed(void)
 {
     return gpio_get_level(PIN_KEY3) == 0;  // 按下接地
+}
+
+void board_screen(bool on)
+{
+    if (!s_panel || s_screen_on == on) {
+        return;
+    }
+    // 关屏做两层：亮度先归 0，再发 DISPOFF。
+    // 只发 DISPOFF 时，个别 CO5300 批次仍会保留微弱残像（AMOLED 自发光，残像会烧屏），
+    // 亮度归 0 是彻底熄像素；开屏时先 DISPON 再恢复亮度。
+    if (on) {
+        esp_lcd_panel_disp_on_off(s_panel, true);
+        esp_lcd_panel_co5300_set_brightness(s_panel, 100);
+    } else {
+        esp_lcd_panel_co5300_set_brightness(s_panel, 0);
+        esp_lcd_panel_disp_on_off(s_panel, false);
+    }
+    s_screen_on = on;
+    ESP_LOGI(TAG, "屏幕%s", on ? "点亮" : "关闭（省电/防烧屏）");
+}
+
+bool board_screen_is_on(void)
+{
+    return s_screen_on;
+}
+
+void *board_i2c_bus(void)
+{
+    return s_i2c_bus;
 }
