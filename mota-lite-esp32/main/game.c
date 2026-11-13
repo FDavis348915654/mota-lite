@@ -2373,6 +2373,26 @@ int game_floor(void)
     return s_hud.floor;
 }
 
+// 导出当前存档串（logic.serialize 的原文），便于备份/迁移，避免再次出现"覆盖后无法恢复"
+void game_debug_save(char *buf, int n)
+{
+    buf[0] = '\0';
+    if (!s_ctx || !JS_IsObject(s_state) || !JS_IsFunction(s_ctx, s_fn_ser)) {
+        return;
+    }
+    JSValue v = JS_Call(s_ctx, s_fn_ser, s_logic, 1, &s_state);
+    if (JS_IsException(v)) {
+        js_dump_error("serialize");
+        return;
+    }
+    const char *text = JS_ToCString(s_ctx, v);
+    if (text) {
+        snprintf(buf, n, "%s", text);
+        JS_FreeCString(s_ctx, text);
+    }
+    JS_FreeValue(s_ctx, v);
+}
+
 void game_debug_state(char *buf, int n)
 {
     snprintf(buf, n, "第%d层 (%d,%d) HP%d A%d D%d G%d Y%d B%d R%d 步%d 结束%d flags%u 覆盖%d cam%d,%d touch%d@%d,%d",

@@ -55,6 +55,9 @@ bool game_ended(void);
 // 诊断：一行状态
 void game_debug_state(char *buf, int n);
 
+// 诊断：导出当前存档串（可直接用于 diag 的 load）
+void game_debug_save(char *buf, int n);
+
 // 诊断：直接载入一条存档串并落盘
 bool game_load_text(const char *text);
 

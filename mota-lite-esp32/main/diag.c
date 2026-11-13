@@ -4,6 +4,7 @@
 //   newgame        重开一局
 //   state          打一行状态
 //   off / on       关屏 / 点亮（关屏=亮度0+DISPOFF，彻底熄像素）
+//   save           导出当前存档串（备份/迁移）
 //
 // 走 USB Serial JTAG 的 VFS：安装驱动后 printf 仍然可用，日志不断。
 // Created by Davis
@@ -159,6 +160,10 @@ static void handle_line(char *line)
         capture();
     } else if (strcmp(line, "newgame") == 0) {
         s_restart = true;
+    } else if (strcmp(line, "save") == 0) {
+        char sc[256];
+        game_debug_save(sc, sizeof(sc));
+        printf("SAVE %s\n", sc[0] ? sc : "(empty)");
     } else if (strcmp(line, "state") == 0) {
         char st[256];
         game_debug_state(st, sizeof(st));
