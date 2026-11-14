@@ -109,8 +109,8 @@ ok('怪 ATK 逐层单调递增（修 100% 零伤根因）',
   data.floorScale.every((s, i) => i === 0 || s.atk >= data.floorScale[i - 1].atk),
   data.floorScale[0].atk + ' → ' + data.floorScale[20].atk)
 ok('怪 HP 逐层不递减', data.floorScale.every((s, i) => i === 0 || s.hp >= data.floorScale[i - 1].hp))
-ok('9 种怪、字符 1-8 + X 全有对应', data.monsters.length === 9 &&
-  '12345678X'.split('').every(ch => data.monsters.some(m => m.ch === ch)),
+ok('10 种怪、字符 1-9 + X 全有对应（v0.19 新增 9 噬血蝠）', data.monsters.length === 10 &&
+  '123456789X'.split('').every(ch => data.monsters.some(m => m.ch === ch)),
   data.monsters.map(m => m.ch + ':' + m.name).join(' '))
 ok('存在 pierce 真实伤害怪', data.monsters.some(m => m.pierce))
 ok('魔王 noScale（终局独立数值）', (() => {
@@ -193,7 +193,7 @@ console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封�
 const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
 const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
 const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
-ok('meta.schema 升到 8（v0.17 高防曲线 / 挡路怪）', data.meta.schema === 8, String(data.meta.schema))
+ok('meta.schema 升到 10（v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化）', data.meta.schema === 10, String(data.meta.schema))
 ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
   floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
 ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
@@ -291,57 +291,60 @@ ok('每处暗门 A 至少有一个真正可走的邻格（非墙非实体）',
     })
   }))
 // ---- v0.16 小精灵 / 能量核心 / 屏障配置 ----
-ok('meta.schema = 8 且 levels.json 有 barrier 段',
-  data.meta.schema === 8 && !!data.barrier)
-ok('barrier 配置：floor=16 / coreFloor=12 / fairyFloor=0 / boost / charge',
-  data.barrier.floor === 16 && data.barrier.coreFloor === 12 && data.barrier.fairyFloor === 0 &&
-  data.barrier.boost.hp > 1 && data.barrier.charge.atk > 0)
+ok('meta.schema = 10 且 levels.json 有 barrier 段',
+  data.meta.schema === 10 && !!data.barrier)
+ok('barrier 配置：台阶 15F(floor=14) / 核心 17F(coreFloor=16) / 精灵 1F / chargeRatio=0.40',
+  data.barrier.floor === 14 && data.barrier.coreFloor === 16 && data.barrier.fairyFloor === 0 &&
+  data.barrier.boost.hp > 1 && data.barrier.chargeRatio === 0.4)
 ok('tileColor / tileChar 覆盖 e 与 C',
   !!data.tileColor.e && !!data.tileColor.C &&
   data.tileChar.e === '灵' && data.tileChar.C === '核')
 ok('ITEMS 有 core_energy(flag=128) / npc_fairy',
   data.items.some(i => i.id === 'core_energy' && i.ch === 'C' && i.effect.flag === 128) &&
   data.items.some(i => i.id === 'npc_fairy' && i.ch === 'e'))
-ok('1F (1,2) 是小精灵 e、13F 房间有 C、全塔 e/C 各唯一',
+ok('1F (1,2) 是小精灵 e、17F 商人房有 C、全塔 e/C 各唯一',
   data.floors[0].rows[2][1] === 'e' &&
-  data.floors[12].rows.some(r => r.includes('C')) &&
+  data.floors[16].rows.some(r => r.includes('C')) &&
   data.floors.flatMap(f => f.rows).join('').split('e').length - 1 === 1 &&
   data.floors.flatMap(f => f.rows).join('').split('C').length - 1 === 1)
-ok('13F 房间 j 与 C 同房（能量核心通关必经）',
+ok('v0.18：13F 只留锁匠工具 j、17F 商人房 C 与 N 同房（解开旧耦合）',
   data.floors[12].rows.slice(4, 8).some(r => r.includes('j')) &&
-  data.floors[12].rows.slice(4, 8).some(r => r.includes('C')))
-ok('每层常规怪 12 只（21F 为 8）、全塔损血上调（首层 targetLoss=31）',
+  !data.floors[12].rows.some(r => r.includes('C')) &&
+  data.floors[16].rows.some(r => r.includes('C')) &&
+  data.floors[16].rows.some(r => r.includes('N')))
+ok('每层实体怪 12 只（常规 + 吸血 9 互补，21F 为 8）、首层 targetLoss=31',
   data.floorScale[0].targetLoss === 31 &&
   data.floors.slice(0, 20).every(f =>
-    f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12))
+    f.rows.join('').split('').filter(c => '12456789'.includes(c)).length === 12) &&
+  data.floors[20].rows.join('').split('').filter(c => '12456789'.includes(c)).length === 8)
 ok('tables.js 导出 BARRIER 且与 JSON 逐项一致',
   JSON.stringify(t.BARRIER) === JSON.stringify(data.barrier))
 
 // ---- v0.17 高防怪 / 破防临界 / 挡路怪 ----
 const CFG17 = data.meta.curve
-ok('meta.curve 有 defRatio=0.65 / battleRounds=5 / lossGain=1.3 / costMul=5.0',
+ok('meta.curve 有 defRatio=0.65 / battleRounds=5 / lossGain=1.5 / costMul=5.0',
   CFG17.defRatio === 0.65 && CFG17.battleRounds === 5 &&
-  CFG17.lossGain === 1.3 && CFG17.costMul === 5.0)
-ok('FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=190、逐层不回落',
-  data.floorScale[0].def >= 13 && data.floorScale[20].def >= 190 &&
+  CFG17.lossGain === 1.5 && CFG17.costMul === 5.0)
+ok('FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=140、逐层不回落',
+  data.floorScale[0].def >= 13 && data.floorScale[20].def >= 140 &&
   data.floorScale.slice(0, 21).every((s, i, a) => i === 0 || s.def >= a[i - 1].def))
 ok('标准怪 def/怪攻 提升到 0.3~0.6（v0.16 仅 0.14~0.24）',
   data.floorScale.slice(0, 21).every(s => s.def / s.atk >= 0.28) &&
-  data.floorScale[20].def / data.floorScale[20].atk >= 0.5)
+  data.floorScale[20].def / data.floorScale[20].atk >= 0.45)
 const wallMon17 = data.monsters.find(m => m.ch === '6')
-ok('m6 石头人高防低攻（defW>=1.2 / atkW<=0.95 / hpW=1.0）',
-  !!wallMon17 && wallMon17.defW >= 1.2 && wallMon17.atkW <= 0.95 && wallMon17.hpW === 1.0)
-ok('常规怪 atkW 收敛到 0.9~1.05（防 (atkW-1)·玩家DEF 放大净伤）',
-  data.monsters.filter(m => !m.elite && !m.pierce && !m.noScale)
+ok('m6 守门怪高防低攻且 hpW 大幅提升到 1.5（defW>=1.2 / atkW<=0.95）',
+  !!wallMon17 && wallMon17.defW >= 1.2 && wallMon17.atkW <= 0.95 && wallMon17.hpW === 1.5)
+ok('常规怪 atkW 收敛到 0.9~1.05（吸血怪 m10 的 atkW=0.5 单独口径，不纳入）',
+  data.monsters.filter(m => !m.elite && !m.pierce && !m.noScale && !m.drain)
     .every(m => m.atkW >= 0.9 && m.atkW <= 1.05))
 ok('pierce 权重减半（<=0.10，回合 3→5 不放大真实伤害）',
   data.monsters.filter(m => m.pierce).every(m => m.atkW <= 0.1))
-ok('barrier.boost 收敛为温和台阶（hp1.1/atk1.05/def1.0）',
-  data.barrier.boost.hp === 1.1 && data.barrier.boost.atk === 1.05 &&
+ok('barrier.boost 收敛为温和台阶（hp1.2/atk1.04/def1.0）',
+  data.barrier.boost.hp === 1.2 && data.barrier.boost.atk === 1.04 &&
   data.barrier.boost.def === 1.0)
-ok('m9 精英重校 hpW0.8/atkW1.25/defW1.0（终局仍可打）',
+ok('m9 宝库守卫只拉高强度 hpW1.0/atkW1.25/defW1.0（终局仍可打）',
   (() => { const e = data.monsters.find(m => m.ch === 'X')
-    return !!e && e.hpW === 0.8 && e.atkW === 1.25 && e.defW === 1.0 })())
+    return !!e && e.hpW === 1.0 && e.atkW === 1.25 && e.defW === 1.0 })())
 const cnt6 = f => f.rows.join('').split('6').length - 1
 ok('高防挡路怪只投 2F~16F（1F 与 17F~21F 为 0，中间每层至少 1 只）',
   cnt6(data.floors[0]) === 0 && data.floors.slice(16).every(f => cnt6(f) === 0) &&
@@ -372,5 +375,52 @@ ok('2F~16F 每层至少 1 只 m6 落在主路真割点（堵住即上不去楼�
 ok('tables.js 的 FLOOR_SCALE / MONSTERS 与 JSON 逐项一致',
   JSON.stringify(t.FLOOR_SCALE) === JSON.stringify(data.floorScale) &&
   JSON.stringify(t.MONSTERS) === JSON.stringify(data.monsters))
+// ---- v0.18 任务顺序 / 软门槛 / 百分比灌顶：关卡表专项 ----
+ok('meta.note 追加 v0.18 任务顺序重排说明',
+  /v0\.18 任务顺序重排/.test(data.meta.note))
+ok('barrier.chargeRatio = 0.40（按当前值百分比灌顶，非固定值 charge）',
+  data.barrier.chargeRatio === 0.4 && data.barrier.charge === undefined)
+ok('meta.curve 无搜索期临时参数（全局 defRatio 仍 0.65）',
+  data.meta.curve.defRatio === 0.65 &&
+  data.meta.curve.defRatioLate === undefined && data.meta.curve.lateFloor === undefined)
+ok('任务格分布：13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e',
+  (() => { const R = i => data.floors[i].rows.join('')
+    return R(12).includes('j') && !R(12).includes('C') &&
+           R(14).includes('T') && R(15).includes('Z') &&
+           R(16).includes('C') && R(16).includes('N') &&
+           R(18).includes('q') && R(0).includes('e') })())
+ok('17F~21F 的 FLOOR_SCALE 按未强化基准重建（21F def < 160，v0.17 为 197）',
+  data.floorScale[20].def < 160 && data.floorScale[16].def < 130)
+ok('1F~16F 的 FLOOR_SCALE 与 v0.17 完全一致（表头未漂移）',
+  data.floorScale[0].def === 13 && data.floorScale[13].def === 98 &&
+  data.floorScale[15].def === 110)
+
+// ---- v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化：结构专项 ----
+ok('v0.19 meta.schema = 10 且 meta.curve.lossGain = 1.5',
+  data.meta.schema === 10 && data.meta.curve.lossGain === 1.5)
+ok('v0.19 第 10 种怪 m10 噬血蝠字段（drain0.15 / eliteBefore11 / eliteShift9 / defW1.0 / hpW0.55）',
+  (() => { const m = data.monsters.find(x => x.ch === '9')
+    return !!m && m.id === 'm10' && m.drain === 0.15 &&
+      m.eliteBefore === 11 && m.eliteShift === 9 && m.defW === 1.0 && m.hpW === 0.55 })())
+ok('v0.19 吸血怪 9 分布：1F~12F 每层 1 只、13F 起隔层 1 只、全塔 16 只',
+  (() => {
+    const dist = data.floors.map(f => f.rows.join('').split('9').length - 1)
+    return dist.slice(0, 12).every(n => n === 1) &&
+      [13, 15, 17, 19, 21].every(f => dist[f - 1] === 0) &&
+      [14, 16, 18, 20].every(f => dist[f - 1] === 1) &&
+      dist.reduce((a, b) => a + b, 0) === 16
+  })())
+ok('v0.19 血瓶 ×2 HP 供给：potion_s 100 / potion_l 400',
+  data.items.find(i => i.id === 'potion_s').effect.hp === 100 &&
+  data.items.find(i => i.id === 'potion_l').effect.hp === 400)
+ok('v0.19 tileChar / tileColor 补 9（血 / #c2185b）',
+  data.tileChar['9'] === '血' && data.tileColor['9'] === '#c2185b')
+ok('v0.19 每层实体怪恒 12（常规 + 吸血 9 互补）、21F 为 8',
+  data.floors.slice(0, 20).every(f =>
+    f.rows.join('').split('').filter(c => '12456789'.includes(c)).length === 12) &&
+  data.floors[20].rows.join('').split('').filter(c => '12456789'.includes(c)).length === 8)
+ok('v0.19 tables.js 导出 10 怪且 monsterByCh(9) 带 drain=0.15',
+  t.MONSTERS.length === 10 && t.monsterByCh('9').drain === 0.15)
+
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

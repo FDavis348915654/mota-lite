@@ -44,25 +44,34 @@ import {
 // 经典魔塔是「固定数值、可预计算」：同一只怪在不同层数值不同，玩家可据图鉴精确算损血。
 // 这修掉 v0.8 的根因：怪 ATK 全局常量、玩家 DEF 单调涨到 240，导致 100% 零伤。
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
-export function scaledMon(mon, floor) {
+export function scaledMon(mon, floor, hero) {
   if (!mon || mon.noScale) return mon
+  const fl = floor == null ? 0 : floor
+  // v0.19：吸血怪前期精英化 —— 低层套超前层 FLOOR_SCALE，成为
+  // 「打不过、后期成长起来再回头打」的强敌；到 eliteBefore 层起
+  // 回落到常规池（同一怪种，两种强度形态）。
+  const dynElite = !!(mon.eliteBefore != null && fl < mon.eliteBefore)
+  const shift = dynElite ? (mon.eliteShift || 0) : 0
+  const isElite = !!(mon.elite || dynElite)
   // v0.14：精英怪 scaleShift 取「超前 N 层」的 FLOOR_SCALE（含 21F 之上的外推段），
   // 让同一只宝库守卫在 3F 就是 12F 强度、在 18F 更远超终局 —— 玩家须爬楼变强
   // 再回来打。普通怪 scaleShift=0，索引恒在 0~20，行为与 v0.13 完全一致。
   const idx = Math.min(
-    (floor == null ? 0 : floor) + (mon.scaleShift || 0),
+    fl + (mon.scaleShift || 0) + shift,
     (FLOOR_SCALE && FLOOR_SCALE.length - 1) || 0
   )
   const s = (FLOOR_SCALE && FLOOR_SCALE[idx]) || null
   if (!s) return mon
-  // v0.16：屏障层起「常规怪」数值上一个台阶（HP/ATK/DEF 各乘 BARRIER.boost）。
-  // 精英 X 保持 v0.14 的超前层语义，不叠加倍率，避免 4 处强敌宝库口径漂移；
-  // 魔王 noScale 已在函数开头返回。玩家强化后靠 charge 的属性打这个台阶。
-  const fl = floor == null ? 0 : floor
-  const mul = (BARRIER && fl >= BARRIER.floor && !mon.elite)
-    ? BARRIER.boost : { hp: 1, atk: 1, def: 1 }
+  // v0.18：能量护盾 = 未强化期间的数值台阶。hero 为 null（校验 / 基线查询）
+  // 时不叠加，FLOOR_SCALE 基线仍可精确复算；传 hero 且未 FAY_CHARGED 且
+  // 层 >= 台阶起点 且 非 elite -> 叠加 boost。强化后护盾散去、怪回到基线。
+  // 精英 X 与前期精英化吸血怪不叠加 boost（保持强敌语义），魔王 noScale 已返回。
+  const shielded = !!(BARRIER && hero && fl >= BARRIER.floor && !isElite &&
+                      !((hero.flags || 0) & FLAG.FAY_CHARGED))
+  const mul = shielded ? BARRIER.boost : { hp: 1, atk: 1, def: 1 }
   return {
     ...mon,
+    elite: isElite,
     hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp)),
     atk: Math.max(1, Math.round(s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk)),
     def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW) * mul.def))
@@ -94,8 +103,8 @@ export const FLAG = {
   LOCKPICK: 4,        // 持有锁匠工具 j（盗贼任务一）
   MONEYBAG: 8,        // 持有钱袋 q（盗贼任务二）
   MAGE_FREED: 16,     // 法师 M 已救出（此后撞 M 打开经验兑换而非再给奖励）
-  CORE_HELD: 128,     // v0.16 持有能量核心 C（13F 房间，全塔唯一）
-  FAY_CHARGED: 256    // v0.16 已回 1F 找小精灵完成强化（能量护盾解除）
+  CORE_HELD: 128,     // v0.18 持有能量核心 C（17F 商人房，全塔唯一）
+  FAY_CHARGED: 256    // v0.18 已回 1F 完成灌顶（百分比强化 + 能量护盾散去）
 }
 // 盗贼任务阶段存 flags 的 bit5-6：0 被困 / 1 已救（等锁匠工具）/ 2 已开门（等钱袋）/ 3 已离塔
 export function thiefStage(hero) { return ((hero.flags || 0) >> 5) & 3 }
@@ -171,31 +180,31 @@ function setTile(s, x, y, ch) {
 // pierce：法师系「真实伤害」，净伤直接取敌攻、无视 DEF（经典魔塔法师机制），
 //         也是打破「堆防即可免疫一切」的关键设计。
 export function calcBattle(hero, mon, floor) {
-  // v0.16 能量护盾（硬门槛）：屏障层起、未强化时，常规怪被能量护盾包裹，
-  // 无论玩家堆多少攻防 / 商店买属性 / 法师兑经验都判「不可破防」。
-  // 唯一解法是回 1F 用「能量核心 + 小精灵」完成强化（FAY_CHARGED 置位）。
-  // 精英 X 与魔王 noScale 不套护盾，保持 v0.14 强敌 / 终局语义。
-  const fl = floor == null ? 0 : floor
-  if (BARRIER && fl >= BARRIER.floor && mon && !mon.elite && !mon.noScale &&
-      !((hero.flags || 0) & FLAG.FAY_CHARGED)) {
-    return { ok: false, reason: 'shield', rounds: 0, hpCost: 0,
-             perHit: 0, monPerHit: 0 }
-  }
-  const m = scaledMon(mon, floor == null ? 0 : floor)
+  // v0.18：软门槛 —— 移除「护盾强制不可破防」早退。未强化时 15F 起常规怪
+  // 由 scaledMon 叠加 boost（只是数值明显变强、打得吃力），堆攻防 / 商店 /
+  // 法师都能正常打过去；玩家自主决定何时回 1F 强化，也可以一路硬扛到塔顶。
+  // 精英 X 与魔王 noScale 不叠加 boost，保持 v0.14 强敌 / 终局语义。
+  const m = scaledMon(mon, floor == null ? 0 : floor, hero)
   let perHit = hero.atk - m.def
   if (perHit <= 0) {
     if (!CONFIG.MIN_DAMAGE_1) {
-      return { ok: false, reason: 'unbreakable', rounds: 0, hpCost: 0, perHit, monPerHit: 0 }
+      return { ok: false, reason: 'unbreakable', rounds: 0, hpCost: 0, perHit, monPerHit: 0, drainPerHit: 0 }
     }
     perHit = 1
   }
   const rounds = Math.ceil(m.hp / perHit)
+  const hits = CONFIG.FIRST_STRIKE ? rounds - 1 : rounds
   const monPerHit = m.pierce ? m.atk : Math.max(0, m.atk - hero.def)
-  const hpCost = (CONFIG.FIRST_STRIKE ? rounds - 1 : rounds) * monPerHit
+  // v0.19：攻击吸血 = 独立于破防伤害的百分比削血。按【战斗开始时】玩家当前
+  // HP 的固定值，怪物每次攻击吸一次；普伤为 0 也照扣（「不管能不能破防」）。
+  // 只扣玩家 HP、不回怪血，避免「怪回血 -> 回合变长 -> 吸更多」正反馈死局。
+  // 硬约束 k×drain < 1：吸血怪由配置层压到 2~3 回合，r=15% 余量充足。
+  const drainPerHit = m.drain ? Math.round(hero.hp * m.drain) : 0
+  const hpCost = hits * (monPerHit + drainPerHit)
   if (hpCost >= hero.hp) {
-    return { ok: false, reason: 'lethal', rounds, hpCost, perHit, monPerHit }
+    return { ok: false, reason: 'lethal', rounds, hpCost, perHit, monPerHit, drainPerHit }
   }
-  return { ok: true, reason: '', rounds, hpCost, perHit, monPerHit }
+  return { ok: true, reason: '', rounds, hpCost, perHit, monPerHit, drainPerHit }
 }
 
 // ---- 怪物手册：临界攻击 / 加防收益（经典魔塔怪物手册的核心策略信息）----
@@ -204,12 +213,13 @@ export function calcBattle(hero, mon, floor) {
 // 纯计算、不写 state，宿主层与图鉴共用，也可被 node 校验。
 export function battleHint(hero, mon, floor) {
   const r = calcBattle(hero, mon, floor)
+  // v0.18：软门槛后不再产生 'shield' reason；此分支保留作历史兼容（死代码）。
   if (r.reason === 'shield') return { breakAtk: null, nextAtk: null, defGain: 0, shield: true, r }
   if (r.reason === 'unbreakable') return { breakAtk: mon.def + 1 - hero.atk, nextAtk: null, defGain: 0, r }
   const hits = CONFIG.FIRST_STRIKE ? Math.max(0, r.rounds - 1) : r.rounds
   let nextAtk = null
   if (r.rounds > 1) {
-    const m = scaledMon(mon, floor == null ? 0 : floor)
+    const m = scaledMon(mon, floor == null ? 0 : floor, hero)
     const needPerHit = Math.ceil(m.hp / (r.rounds - 1))
     nextAtk = Math.max(0, m.def + needPerHit - hero.atk)
   }
@@ -304,11 +314,10 @@ export function resolveStep(prev, direction) {
   if (mon) {
     const r = calcBattle(s.hero, mon, s.floor)
     if (!r.ok) {
+      // v0.18：软门槛后战斗失败只可能是「破不了防」或「会阵亡」两种。
       const text = r.reason === 'unbreakable'
         ? '攻击不足，无法破防'
-        : r.reason === 'shield'
-          ? '能量护盾挡住了攻击——带能量核心回 1F 找小精灵强化'
-          : '硬拼会阵亡（需 ' + (r.hpCost + 1) + ' HP）'
+        : '硬拼会阵亡（需 ' + (r.hpCost + 1) + ' HP）'
       ev.push({ t: 'msg', text }, { t: 'vibrate' })
       return { state: s, events: ev }
     }
@@ -319,7 +328,9 @@ export function resolveStep(prev, direction) {
     setTile(s, nx, ny, '.')
     ev.push({ t: 'vibrate' }, {
       t: 'msg',
-      text: '胜 ' + mon.name + ' -' + r.hpCost + 'HP +' + mon.gold + 'G +' + expGain + 'EXP'
+      text: '胜 ' + mon.name + ' -' + r.hpCost + 'HP' +
+        (r.drainPerHit ? '（吸血 ' + r.drainPerHit * (CONFIG.FIRST_STRIKE ? r.rounds - 1 : r.rounds) + '）' : '') +
+        ' +' + mon.gold + 'G +' + expGain + 'EXP'
     }, { t: 'save' })
     // v0.11 经典魔塔交互：撞怪 = 结算但不进入该格，英雄停在原地。
     // 怪格已清成地板，玩家再走一步才进去；门 / 楼梯 / 王座 / 暗格仍按各自语义移动。
@@ -379,23 +390,30 @@ export function resolveStep(prev, direction) {
     return { state: s, events: ev }
   }
 
-  // 3.6 v0.16 小精灵 e（1F 出生点旁常驻 NPC）：三态、可反复撞、英雄停原地、不清格。
-  //   未持核心 -> 讲背景并暗示「带能量核心回来」；持核心且未强化 -> 消耗核心、
-  //   一次性大幅强化（幅度在 BARRIER.charge 配置层，便于探针校准）；已强化 -> 闲聊。
+  // 3.6 v0.18 小精灵 e（1F 出生点旁常驻 NPC）：三态、可反复撞、英雄停原地、不清格。
+  //   未持核心 -> 讲背景并暗示「越晚来收获越大」；持核心且未灌顶 -> 消耗核心、
+  //   按【强化那一刻的当前攻/防/血】×(1+BARRIER.chargeRatio) 灌顶，置
+  //   FAY_CHARGED；scaledMon 见到该位后取消 boost（护盾散去、怪回到基线）。
+  //   晚强化基数更大 -> 百分比加成绝对值更高；早强化早点解除吃力状态、少损血。
   if (t === 'e') {
     const charged = !!(s.hero.flags & FLAG.FAY_CHARGED)
     const hasCore = !!(s.hero.flags & FLAG.CORE_HELD)
     if (charged) {
       ev.push({ t: 'msg', text: '小精灵：护盾已经散了，去塔顶吧' })
     } else if (hasCore) {
-      const c = (BARRIER && BARRIER.charge) || { atk: 80, def: 60, hp: 1200 }
-      s.hero.atk += c.atk; s.hero.def += c.def; s.hero.hp += c.hp
+      const ratio = (BARRIER && BARRIER.chargeRatio) || 0.4
+      const b = { atk: s.hero.atk, def: s.hero.def, hp: s.hero.hp }
+      s.hero.atk = Math.round(s.hero.atk * (1 + ratio))
+      s.hero.def = Math.round(s.hero.def * (1 + ratio))
+      s.hero.hp = Math.round(s.hero.hp * (1 + ratio))
       s.hero.flags = (s.hero.flags & ~FLAG.CORE_HELD) | FLAG.FAY_CHARGED
       ev.push({ t: 'vibrate' }, {
-        t: 'msg', text: '小精灵引动能量核心：攻 +' + c.atk + ' / 防 +' + c.def + ' / 生命 +' + c.hp
+        t: 'msg', text: '塔灵灌顶：攻 ' + b.atk + '→' + s.hero.atk +
+          ' / 防 ' + b.def + '→' + s.hero.def + ' / 生命 ' + b.hp + '→' + s.hero.hp +
+          '（+' + Math.round(ratio * 100) + '%），上层护盾散去'
       }, { t: 'save' })
     } else {
-      ev.push({ t: 'msg', text: '小精灵：塔上层被能量护盾锁着……带一枚能量核心回来找我' })
+      ev.push({ t: 'msg', text: '小精灵：带一枚能量核心回来找我，越晚来、灌顶的收获越大' })
     }
     return { state: s, events: ev }
   }

@@ -231,6 +231,21 @@ def draw_m2():
     return im
 
 
+def draw_drain():
+    # v0.19：噬血蝠（攻击吸血怪）—— 暗红翼 + 獠牙 + 血滴，与 m2 蝙蝠区分
+    im, d = tile()
+    P(d, [(14, 11), (2, 5), (5, 18), (14, 16)], (136, 20, 56, 255))
+    P(d, [(14, 11), (26, 5), (23, 18), (14, 16)], (136, 20, 56, 255))
+    E(d, [9, 9, 19, 22], (176, 32, 72, 255))
+    P(d, [(10, 9), (14, 5), (14, 10)], (136, 20, 56, 255))
+    P(d, [(18, 9), (14, 5), (14, 10)], (136, 20, 56, 255))
+    d.point((12, 14), fill=(255, 82, 82, 255)); d.point((16, 14), fill=(255, 82, 82, 255))
+    P(d, [(11, 17), (13, 17), (12, 21)], (255, 235, 235, 255))
+    P(d, [(15, 17), (17, 17), (16, 21)], (255, 235, 235, 255))
+    E(d, [13, 21, 15, 25], (229, 57, 53, 255))
+    return im
+
+
 def draw_m3():
     im, d = tile()
     P(d, [(6, 9), (3, 1), (11, 7)], (229, 57, 53, 255))
@@ -514,7 +529,7 @@ SPRITES = [
     ('npc_elder', draw_npc_elder), ('lockpick', draw_lockpick),
     ('moneybag', draw_moneybag), ('door_seal', draw_door_seal),
     ('elite', draw_elite),
-    ('fairy', draw_fairy), ('core', draw_core),
+    ('fairy', draw_fairy), ('core', draw_core), ('drain', draw_drain),
     ('fx_hit', draw_fx_hit), ('fx_boom', draw_fx_boom), ('fx_pick', draw_fx_pick),
 ]
 
@@ -536,8 +551,8 @@ TILE_MAP = {
     'E': 'npc_elder', 'j': 'lockpick', 'q': 'moneybag', 'Z': 'door_seal',
     # v0.14：宝库守卫（精英怪，强度超前 9 层），独立帧避免回退成色块
     'X': 'elite',
-    # v0.16：1F 塔灵小精灵 / 13F 能量核心，独立像素帧
-    'e': 'fairy', 'C': 'core'
+    # v0.16：1F 塔灵小精灵 / 能量核心（v0.18 起在 17F 商人房），独立像素帧
+    'e': 'fairy', 'C': 'core', '9': 'drain'
 }
 
 cols = 8

@@ -85,7 +85,7 @@ export function findPath(s, targets, opts) {
 
 // 收集当前层仍「可清且有益」的目标格，按优先级分组。
 // 门只在有对应钥匙时列入；打不过的怪不列入（等属性提升后下一轮自然会出现）。
-function scan(s) {
+function scan(s, noCharge) {
   const rows = FLOORS[s.floor].rows
   const W = rows[0].length, H = rows.length
   const g = { win: [], items: [], monsters: [], doors: [], stairs: [] }
@@ -116,7 +116,8 @@ function scan(s) {
         if (ch === 'e') {
           // v0.16：只有「带着能量核心、还没强化」时撞小精灵才有用；
           // 否则对常驻格反复空撞会让 solver 死循环。
-          const canCharge = (s.hero.flags & FLAG.CORE_HELD) &&
+          const canCharge = !noCharge &&
+                            (s.hero.flags & FLAG.CORE_HELD) &&
                             !(s.hero.flags & FLAG.FAY_CHARGED)
           if (!canCharge) continue
         }
@@ -144,17 +145,25 @@ function scan(s) {
   return g
 }
 
-export function findSolution() {
+export function findSolution(opts) {
+  // v0.18 开发工具选项（默认行为完全不变）：
+  //   noCharge=true  -> 全程不找小精灵强化，验证「软门槛：不强化也能通关」；
+  //   chargeFloor=n  -> 拿到核心后继续上楼到 floor>=n 才回头强化，验证
+  //                     「晚强化收益更高」这条路径同样可通关。
+  const noCharge = !!(opts && opts.noCharge)
+  const chargeFloor = (opts && Number.isFinite(opts.chargeFloor))
+    ? opts.chargeFloor : BARRIER.floor
   let s = newGame()
   const steps = []
   let visited = 0, rounds = 0
   let backForFairy = false
-  // v0.16：新增「17F 卡关 -> 逐层下楼回 1F 强化 -> 逐层上楼」往返约 +700 步 / +400 轮
+  // v0.16 起「拿核心 -> 逐层下楼回 1F 灌顶 -> 逐层上楼」跨层往返；
+  // v0.18 改成软门槛：玩家可自主决定何时回头（见 findSolution 的 chargeFloor）。
   const MAX_STEPS = 6000
 
   while (!s.ended && steps.length < MAX_STEPS) {
     rounds++
-    if (rounds > 1400) return null           // 防策略死循环；v0.16 含精灵跨层往返
+    if (rounds > 1400) return null           // 防策略死循环；含精灵跨层往返
 
     // v0.13 盗贼任务线：持有任务道具且盗贼在等交付时，优先逐层下楼回 15F（floor index 14）。
     // stage1（交锁匠工具）是通关硬门槛 —— 16F 封印门 Z 不开就到不了上层；stage2（交钱袋）
@@ -176,15 +185,16 @@ export function findSolution() {
       }
     }
 
-    // v0.16 精灵强化往返：到达屏障层（17F）却还没强化时，护盾会把整层常规怪
-    // 判成 unbreakable，主路割点全封死、U 不可达 —— 这就是「卡在某一层过不去」。
-    // 唯一解法是带着 13F 的能量核心逐层下楼回 1F 撞小精灵完成强化。
+    // v0.18 精灵灌顶往返（软门槛）：17F 商人房拿到核心后，玩家可以选择立刻
+    // 逐层下楼回 1F 撞小精灵灌顶，也可以先往上成长几层再回来（基数更大、
+    // 百分比加成绝对值更高，代价是多吃几层苦），甚至完全不回来硬扛到塔顶。
+    // 不再有「护盾强制不可破防」的卡关；chargeFloor 决定攻略何时触发回头。
     // 与盗贼任务线同一套「targets=['1,1'] 踩 D 换层」跨层往返口径（已验证可靠）。
     const _core = !!(s.hero.flags & FLAG.CORE_HELD)
     const _charged = !!(s.hero.flags & FLAG.FAY_CHARGED)
     if (_charged) backForFairy = false
-    const _needFairy = _core && !_charged &&
-                       (s.floor >= BARRIER.floor || backForFairy)
+    const _needFairy = !noCharge && _core && !_charged &&
+                       (s.floor >= chargeFloor || backForFairy)
     if (_needFairy) {
       backForFairy = true
       if (s.floor > BARRIER.fairyFloor) {
@@ -213,7 +223,7 @@ export function findSolution() {
       // 已回到 1F：落到下面 scan()，由 scan 把小精灵 e 列为目标完成强化
     }
 
-    const g = scan(s)
+    const g = scan(s, noCharge)
     const groups = [g.win, g.items, g.monsters, g.doors, g.stairs]
     let picked = null
     for (const targets of groups) {

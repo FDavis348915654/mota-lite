@@ -185,14 +185,40 @@ ok('v0.14 四处楼层文案都有宝库线索',
 ok('atlas 有 fairy / core 两帧且 e/C 映射到它们',
   !!atlas.frames.fairy && !!atlas.frames.core &&
   atlas.tileMap.e === 'fairy' && atlas.tileMap.C === 'core')
-ok('atlas 帧数 = count（v0.16 由 44 增至 46 帧）',
-  Object.keys(atlas.frames).length === atlas.count && atlas.count === 46)
-ok('v0.16 四段剧情 / 17F 护盾提示 / itemDesc 齐全',
+ok('atlas 帧数 = count（v0.19 新增 drain 帧，46 → 47 帧）',
+  Object.keys(atlas.frames).length === atlas.count && atlas.count === 47)
+ok('v0.18 四段精灵剧情 / 17F 摊子后头的光 / itemDesc 齐全',
   !!TEXTS.story.fairy_intro && !!TEXTS.story.core_hint &&
   !!TEXTS.story.fairy_charge && !!TEXTS.story.fairy_done &&
-  /能量护盾/.test(TEXTS.story.floor_17f.body) &&
+  /摊子后头的光/.test(TEXTS.story.floor_17f.title) &&
+  /封印一破/.test(TEXTS.story.floor_17f.body) &&
   !!TEXTS.itemDesc.core_energy && !!TEXTS.itemDesc.npc_fairy)
-ok('帮助文案说明能量护盾 / 交互等待一拍',
-  /能量护盾/.test(TEXTS.help.rule) && /等一小会儿/.test(TEXTS.help.controls))
+ok('帮助文案说明软门槛 / 百分比灌顶 / 交互等待一拍',
+  /软门槛/.test(TEXTS.help.rule) && /各 \+40%/.test(TEXTS.help.rule) &&
+  /等一小会儿/.test(TEXTS.help.controls))
+ok('v0.18 任务关联剧情链：法师 / 老者 / 盗贼 / 商人 / 精灵互文',
+  /塔灵的锁/.test(TEXTS.story.mage_free.body) &&
+  /压着塔灵的气/.test(TEXTS.story.elder.body) &&
+  /符文一灭/.test(TEXTS.story.thief_door.body) &&
+  /封印灭的那天/.test(TEXTS.story.floor_17f.body) &&
+  /按你【当下的身子】灌顶/.test(TEXTS.story.fairy_intro.body) &&
+  /来时越强，它给的就越多/.test(TEXTS.story.core_hint.body))
+ok('core_hint 标题改为 17F、itemDesc 无 13F 核心旧口径',
+  /17F · 能量核心/.test(TEXTS.story.core_hint.title) &&
+  /17F 商人房拾得/.test(TEXTS.itemDesc.core_energy) &&
+  !/13F 房间拾得，带回/.test(TEXTS.itemDesc.core_energy))
+
+// ---- v0.19 攻击吸血怪：资源与文案 ----
+ok('v0.19 atlas 47 帧且含 drain 帧、9 → drain 映射',
+  atlas.count === 47 && !!atlas.frames.drain && atlas.tileMap['9'] === 'drain')
+ok('v0.19 图鉴有 m10 噬血蝠描述（15% / 堆防 / 先打怪再捡血瓶）',
+  !!TEXTS.monsterDesc.m10 && /15%/.test(TEXTS.monsterDesc.m10) &&
+  /堆防/.test(TEXTS.monsterDesc.m10) && /先打怪再捡血瓶/.test(TEXTS.monsterDesc.m10))
+ok('v0.19 帮助文案说明吸血独立于破防 / 前期精英 / 12F 回落 / 石头人加厚',
+  /堆防挡不住/.test(TEXTS.help.rule) && /15%/.test(TEXTS.help.rule) &&
+  /前期/.test(TEXTS.help.rule) && /12F 起/.test(TEXTS.help.rule) && /石头人/.test(TEXTS.help.rule))
+ok('v0.19 manifest 版本与 version.js 对齐（0.19.0 / v0.19.0）',
+  JSON.parse(readText('assets/manifest.json')).version === '0.19.0' && VERSION === 'v0.19.0')
+
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

@@ -1206,8 +1206,8 @@ try {
     V14.atlasHasElite && V14.scaleGroups === 30)
   // v0.17：新 FLOOR_SCALE 外推段 def 涨约 3 倍，精英按回放首次/终局属性
   // 三维重校为 hpW0.8 / atkW1.25 / defW1.0，保持「首次打不过、终局可打」。
-  check('v0.14 强敌：X 带 scaleShift9 / elite / v0.17 重校 hpW0.8',
-    !!V14.mon && V14.mon.scaleShift === 9 && V14.mon.elite === true && V14.mon.hpW === 0.8,
+  check('v0.14 强敌：X 带 scaleShift9 / elite / v0.19 只拉高强度 hpW1.0',
+    !!V14.mon && V14.mon.scaleShift === 9 && V14.mon.elite === true && V14.mon.hpW === 1.0,
     JSON.stringify(V14.mon))
   check('v0.14 强敌：开局属性打不过全部 4 处', V14.weakAll)
   check('v0.14 强敌：变强后全部可打', V14.strongAll)
@@ -1411,7 +1411,7 @@ try {
     !!gateRow15 && gateRow15.walls>=10 && gateRow15.slots===195 && gateRow15.rendered,
     JSON.stringify(gateRow15))
 
-  // ---- v0.16 小精灵 / 能量核心 / 能量护盾 / 交互等待 专项端到端 ----
+  // ---- v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 / 交互等待 专项端到端 ----
   // 判端全部运行期从 tables.js / logic.js / solver.js / texts.js 现算，不写死坐标与数值。
   const V16 = await ev(`(async()=>{
     const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
@@ -1420,12 +1420,12 @@ try {
     const findCh=(f,ch)=>{for(let y=0;y<t.FLOORS[f].rows.length;y++){const x=t.FLOORS[f].rows[y].indexOf(ch);if(x>=0)return{x,y}}return null};
     const fairyPos=findCh(0,'e'), corePos=findCh(t.BARRIER.coreFloor,'C');
     const m1=t.MONSTERS.find(m=>m.ch==='1');
-    const fake=l.newGame(); fake.floor=t.BARRIER.floor;
-    fake.hero.hp=999999; fake.hero.atk=99999; fake.hero.def=99999; fake.hero.flags=0;
-    const shield=l.calcBattle(fake.hero,m1,t.BARRIER.floor);
-    fake.hero.flags=l.FLAG.FAY_CHARGED;
-    const after=l.calcBattle(fake.hero,m1,t.BARRIER.floor);
-    const s16=l.scaledMon(m1,t.BARRIER.floor-1), s17=l.scaledMon(m1,t.BARRIER.floor);
+    const big=(flags)=>({hp:999999,atk:99999,def:99999,flags});
+    const uncharged=l.calcBattle(big(0),m1,t.BARRIER.floor);
+    const charged=l.calcBattle(big(l.FLAG.FAY_CHARGED),m1,t.BARRIER.floor);
+    const base=l.scaledMon(m1,t.BARRIER.floor);
+    const shieldM=l.scaledMon(m1,t.BARRIER.floor,big(0));
+    const pre=l.scaledMon(m1,t.BARRIER.floor-1,big(0)), preBase=l.scaledMon(m1,t.BARRIER.floor-1);
     const sol=sv.findSolution();
     let s=l.newGame(); const seq=[s.floor];
     if(sol) for(const d of sol.steps){const bf=s.floor; s=l.resolveStep(s,d).state; if(s.floor!==bf) seq.push(s.floor)};
@@ -1436,39 +1436,44 @@ try {
     return {
       barrier:t.BARRIER, fairyPos, corePos,
       fairyCount:(all.match(/e/g)||[]).length, coreCount:(all.match(/C/g)||[]).length,
-      coreSameRoom:t.FLOORS[t.BARRIER.coreFloor].rows.slice(4,8).some(r=>r.includes('j')) &&
-                   t.FLOORS[t.BARRIER.coreFloor].rows.slice(4,8).some(r=>r.includes('C')),
-      mobCounts:t.FLOORS.map(f=>f.rows.join('').split('').filter(c=>'1245678'.includes(c)).length),
+      coreInMerchant:t.FLOORS[t.BARRIER.coreFloor].rows.some(r=>r.includes('C')) &&
+                     t.FLOORS[t.BARRIER.coreFloor].rows.some(r=>r.includes('N')),
+      jIn13:t.FLOORS[12].rows.some(r=>r.includes('j')),
+      noCIn13:!t.FLOORS[12].rows.some(r=>r.includes('C')),
+      mobCounts:t.FLOORS.map(f=>f.rows.join('').split('').filter(c=>'12456789'.includes(c)).length),
       firstLoss:t.FLOOR_SCALE[0].targetLoss,
-      shieldReason:shield.reason, chargedOk:after.ok,
-      stepUp:s17.hp>s16.hp&&s17.atk>s16.atk&&s17.def>s16.def,
+      softOk:uncharged.ok && uncharged.reason!=='shield', chargedOk:charged.ok,
+      shieldHp:shieldM.hp, baseHp:base.hp, shieldAtk:shieldM.atk, baseAtk:base.atk,
+      shieldDef:shieldM.def, baseDef:base.def,
+      preNoBoost:pre.hp===preBase.hp && pre.atk===preBase.atk,
       solOk:!!sol&&sol.state.ended==='win', solSteps:sol?sol.steps.length:0, solRounds:sol?sol.rounds:0,
       peak, back, up,
       buildTile:l.buildCells(l.newGame())[2*W+1].tile,
       tileE:atlas.tileMap.e, tileC:atlas.tileMap.C,
       frameFairy:!!atlas.frames.fairy, frameCore:!!atlas.frames.core,
-      charge:t.BARRIER.charge
+      ratio:t.BARRIER.chargeRatio
     };
   })()`)
-  check('v0.16 小精灵：BARRIER 配置 = 17F 起 / 核心 13F / 精灵 1F / boost / charge',
-    V16.barrier.floor===16 && V16.barrier.coreFloor===12 && V16.barrier.fairyFloor===0 &&
-    V16.barrier.boost.hp>1 && V16.charge.atk>0, JSON.stringify(V16.barrier))
-  check('v0.16 小精灵：1F 出生点旁 (1,2) 是 e、全塔唯一、buildCells 透传 tile=e',
+  check('v0.18 配置：台阶 15F / 核心 17F / 精灵 1F / boost / chargeRatio=0.40',
+    V16.barrier.floor===14 && V16.barrier.coreFloor===16 && V16.barrier.fairyFloor===0 &&
+    V16.barrier.boost.hp>1 && V16.ratio===0.4, JSON.stringify(V16.barrier))
+  check('v0.18 小精灵：1F 出生点旁 (1,2) 是 e、全塔唯一、buildCells 透传 tile=e',
     !!V16.fairyPos && V16.fairyPos.x===1 && V16.fairyPos.y===2 &&
     V16.fairyCount===1 && V16.buildTile==='e', JSON.stringify(V16.fairyPos))
-  check('v0.16 小精灵：13F 房间能量核心 C 与锁匠工具 j 同房、全塔唯一（通关必经）',
-    V16.coreCount===1 && V16.coreSameRoom, JSON.stringify(V16.corePos))
-  check('v0.16 难度：每层常规怪 12 只（21F 为 8）、首层 targetLoss 上调到 31',
+  check('v0.18 核心：17F 商人房 C 与 N 同房、13F 只留锁匠工具 j、全塔唯一',
+    V16.coreCount===1 && V16.coreInMerchant && V16.jIn13 && V16.noCIn13, JSON.stringify(V16.corePos))
+  check('v0.19 难度：每层实体怪 12 只（常规 + 吸血 9 互补，21F 为 8）、首层 targetLoss=31',
     V16.mobCounts.slice(0,20).every(n=>n===12) && V16.mobCounts[20]===8 && V16.firstLoss===31,
     V16.mobCounts.slice(0,3).join('/') + ' … 21F=' + V16.mobCounts[20] + ' / loss=' + V16.firstLoss)
-  check('v0.16 难度：17F 起常规怪 hp/atk/def 明显上台阶', V16.stepUp)
-  check('v0.16 护盾：未强化 17F 怪判 shield，堆到 99999 攻防也绕不过',
-    V16.shieldReason==='shield', V16.shieldReason)
-  check('v0.16 护盾：强化后护盾解除、可打', V16.chargedOk)
-  check('v0.16 护盾：findSolution 通关且回放真实展示 17F→1F→17F 往返',
+  check('v0.18 护盾：未强化 15F 常规怪 HP/ATK 高于基线、怪防恒定（不抬防）',
+    V16.shieldHp>V16.baseHp && V16.shieldAtk>V16.baseAtk && V16.shieldDef===V16.baseDef)
+  check('v0.18 软门槛：未强化 15F 怪能打赢（不再判 shield）', V16.softOk)
+  check('v0.18 灌顶后护盾散去、可打', V16.chargedOk)
+  check('v0.18 台阶起点：14F（15F 前一层）不叠加 boost', V16.preNoBoost)
+  check('v0.18 回放：findSolution 通关且真实展示 17F→1F→17F 往返',
     V16.solOk && V16.peak>=0 && V16.back>V16.peak && V16.up>V16.back,
     V16.solSteps + ' 步 / ' + V16.solRounds + ' 轮 / peak=' + V16.peak + ' back=' + V16.back + ' up=' + V16.up)
-  check('v0.16 小精灵：资源表 e→fairy / C→core 且两个独立像素帧存在',
+  check('v0.18 小精灵：资源表 e→fairy / C→core 且两个独立像素帧存在',
     V16.tileE==='fairy' && V16.tileC==='core' && V16.frameFairy && V16.frameCore)
 
   // 交互等待：用页面内 MutationObserver + performance.now() 记录 #tip 变化时刻，
@@ -1506,17 +1511,17 @@ try {
     far16 && farT16.length>0 && farT16[0]>=240 && farT16[0]<1500, JSON.stringify(farT16))
   await closeStory()
 
-  // C) 持能量核心撞小精灵：一次性大幅强化 + 弹「塔灵灌顶」剧情
+  // C) 持能量核心撞小精灵：按当前值 +40% 灌顶 + 弹「塔灵灌顶」剧情
   await setVal('#saveInput','4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,128||0'); await accept('#btnImport')
   await closeStory()
   const atkB16 = await ev("document.getElementById('hudAtk').textContent")
   await cellClick(2*13+1)
-  const charged16 = await waitFor("document.querySelector('#tip').textContent.includes('能量核心')", 3000)
+  const charged16 = await waitFor("document.querySelector('#tip').textContent.includes('塔灵灌顶')", 3000)
   const atkA16 = await ev("document.getElementById('hudAtk').textContent")
-  check('v0.16 小精灵：持核心撞它一次性大幅强化（攻击 +' + V16.charge.atk + '）',
-    charged16 && Number(atkA16.slice(1))-Number(atkB16.slice(1))===V16.charge.atk,
+  check('v0.18 小精灵：持核心撞它按当前攻击 +40% 灌顶（10→14）',
+    charged16 && Number(atkA16.slice(1))===Math.round(Number(atkB16.slice(1))*1.4),
     atkB16 + ' -> ' + atkA16)
-  check('v0.16 小精灵：强化弹「塔灵灌顶」剧情',
+  check('v0.18 小精灵：灌顶弹「塔灵灌顶」剧情',
     (await hidden('#storyLayer'))===false && (await txt('#storyTitle')).includes('塔灵灌顶'), await txt('#storyTitle'))
   await closeStory()
 
@@ -1531,7 +1536,7 @@ try {
     idle16 && atkIdleA16===atkIdleB16, atkIdleB16 + ' -> ' + atkIdleA16)
   await closeStory()
 
-  // E) 17F 护盾端到端：高属性但未强化，撞怪仍被拦下
+  // E) v0.18 软门槛端到端：15F 高属性但未强化，撞怪能打赢（不再被护盾拦下）
   const SHIELD16 = await ev(`(async()=>{
     const t=await import('./tables.js'), l=await import('./logic.js');
     const f=t.BARRIER.floor, rows=t.FLOORS[f].rows, W=rows[0].length;
@@ -1549,29 +1554,37 @@ try {
     }
     return null;
   })()`)
-  check('v0.16 护盾：17F 找到「怪 + 相邻可站格」场景', !!SHIELD16, JSON.stringify(SHIELD16))
+  check('v0.18 软门槛：15F 找到「怪 + 相邻可站格」场景', !!SHIELD16, JSON.stringify(SHIELD16))
   if (SHIELD16) {
     await setVal('#saveInput', SHIELD16.save); await accept('#btnImport')
     await closeStory()
     await cellClick(SHIELD16.idx)
-    const shielded16 = await waitFor("document.querySelector('#tip').textContent.includes('能量护盾挡住了攻击')", 3000)
-    check('v0.16 护盾：17F 高属性未强化撞怪仍被拦下（堆攻防无效）', shielded16, await txt('#tip'))
+    const won16 = await waitFor("document.querySelector('#tip').textContent.includes('胜 ') || document.querySelector('#log').textContent.includes('胜 ')", 4000)
+    const tipNow = await txt('#tip')
+    check('v0.18 软门槛：15F 高属性未强化撞怪可击败（不再判「护盾挡住了攻击」）',
+      won16 && !tipNow.includes('护盾挡住'), tipNow)
     await closeStory()
   }
 
-  // F) 文案：4 段剧情 + 17F 护盾提示 + 帮助 / 图鉴 / 交互等待说明
+  // F) 文案：4 段剧情 + 17F 摊子后头的光 + 软门槛/百分比帮助 + 任务链互文
   const TX16 = await ev(`(async()=>{const t=await import('./texts.js');return {
     intro:!!t.TEXTS.story.fairy_intro, core:!!t.TEXTS.story.core_hint,
     charge:!!t.TEXTS.story.fairy_charge, done:!!t.TEXTS.story.fairy_done,
     f17:t.TEXTS.story.floor_17f.body, help:t.TEXTS.help.rule,
     itemC:t.TEXTS.itemDesc.core_energy, itemE:t.TEXTS.itemDesc.npc_fairy,
-    wait:t.TEXTS.help.controls
+    wait:t.TEXTS.help.controls,
+    chain:/塔灵的锁/.test(t.TEXTS.story.mage_free.body) &&
+         /压着塔灵的气/.test(t.TEXTS.story.elder.body) &&
+         /符文一灭/.test(t.TEXTS.story.thief_door.body) &&
+         /封印灭的那天/.test(t.TEXTS.story.floor_17f.body)
   }})()`)
-  check('v0.16 小精灵：4 段剧情 + 17F 护盾提示 + 帮助/图鉴/交互等待文案齐全',
+  check('v0.18 文案：4 段剧情 + 17F 摊子后头的光 + 软门槛/百分比帮助 + 任务链互文',
     TX16.intro && TX16.core && TX16.charge && TX16.done &&
-    /能量护盾/.test(TX16.f17) && /能量护盾/.test(TX16.help) &&
+    /摊子后头/.test(TX16.f17) && /软门槛/.test(TX16.help) &&
+    /各 \+40%/.test(TX16.help) &&
     /能量核心/.test(TX16.itemC) && /小精灵/.test(TX16.itemE) &&
-    /等一小会儿/.test(TX16.wait), JSON.stringify({ intro:TX16.intro, core:TX16.core, charge:TX16.charge, done:TX16.done }))
+    /等一小会儿/.test(TX16.wait) && TX16.chain,
+    JSON.stringify({ intro:TX16.intro, core:TX16.core, charge:TX16.charge, done:TX16.done, chain:TX16.chain }))
 
   // ---- v0.17 高防怪 / 破防临界 / 挡路怪 专项端到端 ----
   // 判端全部运行期从 tables.js / logic.js / solver.js / levels.json 现算，不写死坐标与数值。
@@ -1618,16 +1631,17 @@ try {
         if(rows[y][x]==='6'&&!reach(rows,x,y)) n++;
       return n;
     });
-    const eliteOK=[2,8,13,17].every(f=>{
+    const eliteOK=[2,8,13].every(f=>{
       const a=l.calcBattle({...(enter[f]||{hp:200,atk:10,def:10,flags:0})},X,f);
-      const b=l.calcBattle(s.hero,X,f); return !a.ok&&b.ok;
-    });
+      return !a.ok;
+    }) && [2,8,13,17].every(f=>l.calcBattle(s.hero,X,f).ok);
     return {
       cfg,
       def1:t.FLOOR_SCALE[0].def, def21:t.FLOOR_SCALE[20].def,
       ratioMin:Math.min(...t.FLOOR_SCALE.slice(0,21).map(v=>v.def/v.atk)),
       ratio21:t.FLOOR_SCALE[20].def/t.FLOOR_SCALE[20].atk,
-      defModelOK:t.FLOOR_SCALE.slice(0,21).every((v,f)=>!!fight[f]&&Math.abs(v.def-Math.round(0.65*fight[f].atk))<=2),
+      defModelOK:t.FLOOR_SCALE.slice(0,16).every((v,f)=>!!fight[f]&&Math.abs(v.def-Math.round(0.65*fight[f].atk))<=2),
+      lateModelOK:t.FLOOR_SCALE[16].def===Math.round(0.65*183) && t.FLOOR_SCALE[20].def===Math.round(0.65*223),
       nakedReason:naked.reason, swordOK:afterSword.ok, swordCost:afterSword.hpCost,
       r1:rSword.rounds, c1:rSword.hpCost, r2:rSword2.rounds, c2:rSword2.hpCost,
       m6defW:m6.defW, m6atkW:m6.atkW, m6hpW:m6.hpW,
@@ -1641,60 +1655,65 @@ try {
       totalDmg, maxDmg:Math.max(...Object.values(dmg)), battles,
       endHP:s.hero.hp, endATK:s.hero.atk, endDEF:s.hero.def,
       eliteOK, boost:t.BARRIER.boost,
-      shield:l.calcBattle({hp:999999,atk:99999,def:99999,flags:0},m1,t.BARRIER.floor).reason,
+      softOk:l.calcBattle({hp:999999,atk:99999,def:99999,flags:0},m1,t.BARRIER.floor).ok,
       bossCost:l.calcBattle(s.hero,boss,20).hpCost,
-      atkWs:t.MONSTERS.filter(m=>!m.elite&&!m.pierce&&!m.noScale).map(m=>m.atkW),
+      atkWs:t.MONSTERS.filter(m=>!m.elite&&!m.pierce&&!m.noScale&&!m.drain).map(m=>m.atkW),
       pierceWs:t.MONSTERS.filter(m=>m.pierce).map(m=>m.atkW)
     };
   })()`)
-  check('v0.17 高防：meta.curve 有 defRatio0.65 / battleRounds5 / lossGain1.3 / costMul5.0',
+  check('v0.19 高防：meta.curve 有 defRatio0.65 / battleRounds5 / lossGain1.5 / costMul5.0',
     V17.cfg.defRatio===0.65 && V17.cfg.battleRounds===5 &&
-    V17.cfg.lossGain===1.3 && V17.cfg.costMul===5.0, JSON.stringify(V17.cfg))
-  check('v0.17 高防：标准怪防大幅抬高（1F>=13 / 21F>=190 / def·atk^-1 0.3~0.6）',
-    V17.def1>=13 && V17.def21>=190 && V17.ratioMin>=0.28 && V17.ratio21>=0.5,
+    V17.cfg.lossGain===1.5 && V17.cfg.costMul===5.0, JSON.stringify(V17.cfg))
+  check('v0.17 高防：标准怪防大幅抬高（1F>=13 / 21F>=140 / def·atk^-1 0.3~0.6）',
+    V17.def1>=13 && V17.def21>=140 && V17.ratioMin>=0.28 && V17.ratio21>=0.45,
     '1F=' + V17.def1 + ' 21F=' + V17.def21 + ' min=' + V17.ratioMin.toFixed(2))
-  check('v0.17 高防：怪防按每层首次战斗实测 ATK 的 0.65 建模', V17.defModelOK)
+  check('v0.17 高防：1F~16F 怪防按每层首次战斗实测 ATK 的 0.65 建模', V17.defModelOK)
+  check('v0.18：17F~21F 改按【未强化路径】基准建模（119 / 145）', V17.lateModelOK)
   check('v0.17 破防：1F 裸装 ATK10 破不了防，拿剑后可破防且有损血',
     V17.nakedReason==='unbreakable' && V17.swordOK && V17.swordCost>0,
     V17.nakedReason + ' / 拿剑 hpCost=' + V17.swordCost)
   check('v0.17 破防：攻击 +10 让蝙蝠回合数与损血双降（攻击宝石边际收益）',
     V17.r2<V17.r1 && V17.c2<V17.c1,
     V17.r1 + '回合/' + V17.c1 + ' -> ' + V17.r2 + '回合/' + V17.c2)
-  check('v0.17 挡路怪：m6 权重高防低攻（defW>=1.2 / atkW<=0.95 / hpW=1.0）',
-    V17.m6defW>=1.2 && V17.m6atkW<=0.95 && V17.m6hpW===1.0,
+  check('v0.19 挡路怪：m6 高防低攻且 hpW 大幅提升到 1.5（defW>=1.2 / atkW<=0.95）',
+    V17.m6defW>=1.2 && V17.m6atkW<=0.95 && V17.m6hpW===1.5,
     V17.m6defW + '/' + V17.m6atkW + '/' + V17.m6hpW)
   check('v0.17 挡路怪：6F 实际数值防高于常规怪、攻低于常规怪',
     V17.w6def>V17.s2def && V17.w6atk<V17.s2atk,
     'm6 ' + V17.w6atk + '/' + V17.w6def + ' vs 蝙蝠 ' + V17.s2atk + '/' + V17.s2def)
-  check('v0.17 数值：常规怪 atkW 收敛 0.9~1.05（防净伤被乘法放大）',
+  check('v0.19 数值：常规怪 atkW 收敛 0.9~1.05（吸血怪 m10 的 0.5 单独口径）',
     V17.atkWs.every(w=>w>=0.9&&w<=1.05), JSON.stringify(V17.atkWs))
   check('v0.17 数值：pierce 权重减半 <=0.10（回合 3→5 不放大真实伤害）',
     V17.pierceWs.every(w=>w<=0.1), JSON.stringify(V17.pierceWs))
-  check('v0.17 数值：BARRIER.boost 收敛为温和台阶 1.1/1.05/1.0',
-    V17.boost.hp===1.1 && V17.boost.atk===1.05 && V17.boost.def===1.0, JSON.stringify(V17.boost))
-  check('v0.17 强敌：m9 精英重校 0.8/1.25/1.0',
-    V17.xHpW===0.8 && V17.xAtkW===1.25 && V17.xDefW===1.0)
-  check('v0.17 挡路怪：1F 与 17F~21F 不投放、2F~16F 每层至少 1 只、全塔 40 只',
-    V17.wallAt1===0 && V17.wallAt17plus===0 && V17.wallMidMin>=1 && V17.wallTotal===40,
+  check('v0.18 数值：BARRIER.boost 收敛为温和台阶 1.2/1.04/1.0（5 条路径可通关）',
+    V17.boost.hp===1.2 && V17.boost.atk===1.04 && V17.boost.def===1.0, JSON.stringify(V17.boost))
+  check('v0.19 强敌：m9 宝库守卫只拉高强度 1.0/1.25/1.0',
+    V17.xHpW===1.0 && V17.xAtkW===1.25 && V17.xDefW===1.0)
+  check('v0.19 挡路怪：1F 与 17F~21F 不投放、2F~16F 每层至少 1 只、全塔 38 只（v0.19 实体槽重排后）',
+    V17.wallAt1===0 && V17.wallAt17plus===0 && V17.wallMidMin>=1 && V17.wallTotal===38,
     '1F=' + V17.wallAt1 + ' 17F+=' + V17.wallAt17plus + ' midMin=' + V17.wallMidMin + ' total=' + V17.wallTotal)
   check('v0.17 挡路怪：20 只落在主路真割点、2F~16F 每层都有（堵住即上不去楼）',
     V17.cutTotal>=15 && V17.cutFloors, '割点=' + V17.cutTotal)
-  check('v0.17 回放：findSolution 通关（3355 步 / 600 轮量级、路线不退化）',
+  check('v0.18 回放：findSolution 通关（3385 步 / 600 轮量级、路线不退化）',
     V17.solOK && V17.steps>3000 && V17.steps<4000 && V17.rounds>500 && V17.rounds<700,
     V17.steps + ' 步 / ' + V17.rounds + ' 轮')
-  check('v0.17 难度：全塔总损血较 v0.16 的 6558 上调 20~40% 且无单层尖峰',
-    V17.totalDmg>6558*1.2 && V17.totalDmg<6558*1.4 && V17.maxDmg<V17.totalDmg/4,
+  check('v0.19：早强化路径总损血 14000~15500 且无单层尖峰（三重叠加难度）',
+    V17.totalDmg>14000 && V17.totalDmg<15500 && V17.maxDmg<V17.totalDmg/4,
     '总损血=' + V17.totalDmg + ' 最高单层=' + V17.maxDmg + ' 终局HP=' + V17.endHP)
-  check('v0.17 强敌：4 处 X 首次全打不过、终局回头全可打', V17.eliteOK)
-  check('v0.17 回归：17F 护盾硬门槛仍在、魔王战仍非零伤',
-    V17.shield==='shield' && V17.bossCost>0, V17.shield + ' / boss -' + V17.bossCost)
+  check('v0.18 强敌：3F/9F/14F 首次打不过、4 处终局回头全可打（18F 因灌顶提前首次可打）', V17.eliteOK)
+  check('v0.18 回归：软门槛（未强化也能打赢）、魔王战仍非零伤',
+    V17.softOk && V17.bossCost>0, V17.softOk + ' / boss -' + V17.bossCost)
 
   // 真实 DOM：帮助弹层与版本徽章
   const helpRule17 = await ev("document.querySelector('#helpRule').textContent")
-  check('v0.17 文案：帮助弹层渲染出破防 / 石头人 / 临界攻击',
-    /破防/.test(helpRule17) && /石头人/.test(helpRule17) && /临界攻击/.test(helpRule17))
+  // v0.18 重写 help.rule 后「破防」并入「破不了防」，旧断言口径同步到新文案，
+  // 并补验软门槛 / 百分比灌顶两个 v0.18 新要素。
+  check('v0.18 文案：帮助弹层渲染出破不了防 / 石头人 / 临界攻击 / 软门槛 / 各 +40%',
+    /破不了防/.test(helpRule17) && /石头人/.test(helpRule17) && /临界攻击/.test(helpRule17) &&
+    /软门槛/.test(helpRule17) && /各 \+40%/.test(helpRule17),
+    'len=' + (helpRule17 ? helpRule17.length : 0))
   const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
-  check('v0.17 版本：标题徽章显示 v0.17.0', /v0\.17\.0/.test(titleV17), titleV17)
+  check('v0.19 版本：标题徽章显示 v0.19.0', /v0\.19\.0/.test(titleV17), titleV17)
 
   // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
   const P17 = await ev(`(async()=>{
@@ -1732,6 +1751,107 @@ try {
       won17, await txt('#log'))
     await closeStory()
   }
+
+  // ---- v0.18 任务链：5 条强化时机路径 + 百分比灌顶 + 剧情因果链 专项 ----
+  const V18 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
+    const stat=(opt)=>{
+      const sol=sv.findSolution(opt); if(!sol) return null;
+      let s=l.newGame(), total=0;
+      for(const d of sol.steps){const b=s.hero.hp; const r=l.resolveStep(s,d); s=r.state;
+        total+=Math.max(0,b-s.hero.hp); if(s.ended) break;}
+      return {ok:s.ended==='win',total,atk:s.hero.atk,def:s.hero.def,hp:s.hero.hp,
+              flags:s.hero.flags,steps:sol.steps.length};
+    };
+    const early=stat(), d18=stat({chargeFloor:17}), d19=stat({chargeFloor:18});
+    const d20=stat({chargeFloor:19}), none=stat({noCharge:true});
+    const g=l.newGame(); g.hero.atk=100; g.hero.def=100; g.hero.hp=200;
+    g.hero.flags=l.FLAG.CORE_HELD;
+    const r=l.resolveStep(g,'down');
+    const R=i=>t.FLOORS[i].rows.join('');
+    return {early,d18,d19,d20,none,
+      pctAtk:r.state.hero.atk===Math.round(100*1.4),
+      pctDef:r.state.hero.def===Math.round(100*1.4),
+      pctHp:r.state.hero.hp===Math.round(200*1.4),
+      consumed:!(r.state.hero.flags&l.FLAG.CORE_HELD) && !!(r.state.hero.flags&l.FLAG.FAY_CHARGED),
+      taskGrid:R(12).includes('j') && !R(12).includes('C') && R(14).includes('T') &&
+               R(15).includes('Z') && R(16).includes('C') && R(16).includes('N') &&
+               R(18).includes('q') && R(0).includes('e'),
+      schema:(await (await fetch('./levels/levels.json')).json()).meta.schema,
+      version:(await import('./version.js')).VERSION};
+  })()`)
+  check('v0.18 任务链：5 条强化时机路径全部通关（软门槛彻底成立）',
+    !!V18.early && !!V18.d18 && !!V18.d19 && !!V18.d20 && !!V18.none &&
+    V18.early.ok && V18.d18.ok && V18.d19.ok && V18.d20.ok && V18.none.ok,
+    JSON.stringify({early:V18.early?.total,d20:V18.d20?.total,none:V18.none?.total}))
+  check('v0.18 任务链：灌顶按当前值 ×1.4（攻/防/血 100/100/200 → 140/140/280）',
+    V18.pctAtk && V18.pctDef && V18.pctHp && V18.consumed)
+  check('v0.18 任务链：晚强化终局 ATK/DEF 高于早强化（收益更高）',
+    !!V18.early && !!V18.d20 && V18.d20.atk>V18.early.atk && V18.d20.def>V18.early.def,
+    V18.early?.atk + '/' + V18.early?.def + ' → ' + V18.d20?.atk + '/' + V18.d20?.def)
+  check('v0.18 任务链：越晚强化越吃苦（总损血递增、终局 HP 递减）',
+    !!V18.early && !!V18.d20 && !!V18.none &&
+    V18.early.total<V18.d20.total && V18.d20.total<V18.none.total &&
+    V18.early.hp>V18.d20.hp && V18.d20.hp>V18.none.hp)
+  check('v0.18 任务链：完全不强化也能通关且未置 FAY_CHARGED（软门槛）',
+    !!V18.none && V18.none.ok && !(V18.none.flags&256))
+  check('v0.18 任务链：任务格 13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e', V18.taskGrid)
+  check('v0.19 任务链：版本 v0.19.0 / meta.schema=10',
+    V18.version==='v0.19.0' && V18.schema===10, V18.version + ' / schema ' + V18.schema)
+
+
+  // ---- v0.19 攻击吸血怪 / 前期精英化 / 后期普通怪 / 守门怪强化 专项端到端 ----
+  // 判端全部运行期从 tables.js / logic.js / solver.js 现算，不写死坐标与数值。
+  const V19 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
+    const dm=t.MONSTERS.find(m=>m.ch==='9');
+    const H=(hp,atk,def)=>({hp,atk,def,flags:0});
+    const nb=l.calcBattle(H(2000,120,5000),dm,11);
+    const k=nb.rounds-1;
+    const lo=l.calcBattle(H(1000,120,5000),dm,11);
+    const hi=l.calcBattle(H(4000,120,5000),dm,11);
+    const hi2=l.calcBattle(H(1400,120,5000),dm,11);
+    const early=l.calcBattle(l.newGame().hero,dm,0);
+    const sol=sv.findSolution(); let s=l.newGame();
+    if(sol) for(const d of sol.steps){s=l.resolveStep(s,d).state; if(s.ended) break;}
+    const late=l.calcBattle(s.hero,dm,0);
+    const e11=l.scaledMon(dm,10), n12=l.scaledMon(dm,11);
+    const dist=t.FLOORS.map(f=>f.rows.join('').split('9').length-1);
+    const atlas=await (await fetch('./assets/sprites.json')).json();
+    const cfg=await (await fetch('./levels/levels.json')).json();
+    const ps=t.ITEMS.find(i=>i.id==='potion_s'), pl=t.ITEMS.find(i=>i.id==='potion_l');
+    return {
+      noBreak: nb.monPerHit===0 && nb.drainPerHit===Math.round(2000*0.15) &&
+               nb.hpCost===k*nb.drainPerHit && k>0,
+      ratio: hi.hpCost===4*lo.hpCost,
+      save: hi2.hpCost-lo.hpCost===k*Math.round(400*0.15),
+      eliteEarly: early.reason==='unbreakable' && late.ok,
+      eliteSwitch: e11.elite===true && n12.elite===false && e11.def>n12.def,
+      drainField: dm.drain===0.15 && dm.eliteBefore===11 && dm.eliteShift===9 && dm.defW===1.0,
+      frames: Object.keys(atlas.frames).length===47 && !!atlas.frames.drain && atlas.tileMap['9']==='drain',
+      grid: dist.slice(0,12).every(n=>n===1) &&
+            [13,15,17,19,21].every(f=>dist[f-1]===0) &&
+            [14,16,18,20].every(f=>dist[f-1]===1) &&
+            dist.reduce((a,b)=>a+b,0)===16,
+      potion: ps.effect.hp===100 && pl.effect.hp===400,
+      guard: t.MONSTERS.find(m=>m.ch==='6').hpW===1.5 && t.MONSTERS.find(m=>m.ch==='X').hpW===1.0,
+      schema: cfg.meta.schema===10 && cfg.meta.curve.lossGain===1.5,
+      version: (await import('./version.js')).VERSION==='v0.19.0'
+    };
+  })()`)
+  check('v0.19 吸血怪：普伤为 0 时仍按当前 HP 15% 吸血（hpCost = k×吸血）', V19.noBreak,
+    'monPerHit=0 / drainPerHit=300 / k=2')
+  check('v0.19 吸血怪：血量越高越不合算（HP 4 倍 → 损血精确 4 倍）', V19.ratio, '300 → 1200')
+  check('v0.19 吸血怪：先打怪再捡血瓶省 k×15%×Δ（Δ=400 → 省 120 HP）', V19.save, '420-300=120')
+  check('v0.19 前期精英打不过 / 终局成长后回头可打', V19.eliteEarly, '1F unbreakable → 终局 ok')
+  check('v0.19 11F 仍精英、12F 回落普通怪（def 143 → 81）', V19.eliteSwitch, '143 → 81')
+  check('v0.19 m10 字段 drain0.15 / eliteBefore11 / eliteShift9 / defW1.0', V19.drainField)
+  check('v0.19 资源 47 帧含 drain、9 → drain 映射', V19.frames)
+  check('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）', V19.grid)
+  check('v0.19 血瓶 ×2 HP 供给（100 / 400）', V19.potion)
+  check('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0', V19.guard)
+  check('v0.19 版本 v0.19.0 / schema10 / lossGain1.5', V19.schema && V19.version)
+
 
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {

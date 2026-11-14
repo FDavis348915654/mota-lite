@@ -247,7 +247,7 @@ function renderBattlePreview() {
   }
   MONSTERS.forEach(m => {
     const n = counts.get(m.ch); if (!n) return
-    const msc = scaledMon(m, state.floor)
+    const msc = scaledMon(m, state.floor, state.hero)
     const hint = battleHint(state.hero, m, state.floor)
     const r = hint.r
     const row = document.createElement('div'); row.className = 'battle-row'
@@ -261,7 +261,7 @@ function renderBattlePreview() {
     stat.title = '本层实际 HP / 攻 / 防'
     row.appendChild(stat)
     const badge = document.createElement('span')
-    if (r.ok) { badge.className = 'badge ok'; badge.textContent = '可打 · ' + r.rounds + ' 回合 · -' + r.hpCost + ' HP' }
+    if (r.ok) { badge.className = 'badge ok'; badge.textContent = '可打 · ' + r.rounds + ' 回合 · -' + r.hpCost + ' HP' + (r.drainPerHit ? '（吸血）' : '') }
     else { badge.className = 'badge no'; badge.textContent = r.reason === 'unbreakable' ? '不可破防' : '会阵亡 -' + r.hpCost + ' HP' }
     // 怪物手册：临界攻击 / 加防收益（经典魔塔策略信息）
     const tips = [m.pierce ? '✦真实伤害，堆防无效' : ('每 +1 防少掉 ' + hint.defGain + ' HP')]
@@ -1178,7 +1178,7 @@ function renderCodex() {
     if (!configured.has(m.ch)) return
     const n = alive.get(m.ch) || 0
     const cleared = n === 0
-    const msc = scaledMon(m, state.floor)          // 本层实际数值（逐层曲线）
+    const msc = scaledMon(m, state.floor, state.hero)   // v0.18：传 hero 以叠加未强化期间的能量护盾
     const hint = battleHint(state.hero, m, state.floor)
     const row = document.createElement('div'); row.className = 'codex-row' + (cleared ? ' cleared' : '')
     row.appendChild(swatch(m.bg, m.ch, TEXTS.monsterDesc[m.id]))

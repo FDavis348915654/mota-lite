@@ -1008,12 +1008,12 @@ ok('楼梯 U/D 不可被 findPath 当作通路穿过', (() => {
   }
   return checked >= 15
 })())
-console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
+console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ===')
 {
   const B = BARRIER
-  ok('BARRIER 配置：屏障 17F / 核心 13F / 精灵 1F / boost / charge',
-    B && B.floor === 16 && B.coreFloor === 12 && B.fairyFloor === 0 &&
-    B.boost.hp > 1 && B.charge.atk > 0)
+  ok('BARRIER 配置：台阶 15F / 核心 17F / 精灵 1F / boost / chargeRatio=0.40',
+    B && B.floor === 14 && B.coreFloor === 16 && B.fairyFloor === 0 &&
+    B.boost.hp > 1 && B.chargeRatio === 0.4 && B.charge === undefined)
   ok('flags 新增 CORE_HELD=128 / FAY_CHARGED=256',
     FLAG.CORE_HELD === 128 && FLAG.FAY_CHARGED === 256)
   ok('deserialize 接受 flags=256（新位）',
@@ -1021,16 +1021,22 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
   ok('deserialize 拒绝 flags=512（超 9 位上限）',
     deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,512||0') === null)
   const m1 = MONSTERS.find(m => m.ch === '1')
-  const fake = newGame(); fake.floor = B.floor
-  fake.hero.hp = 999999; fake.hero.atk = 99999; fake.hero.def = 99999; fake.hero.flags = 0
-  ok('未强化 17F 常规怪判 shield（堆 99999 攻防也绕不过）',
-    calcBattle(fake.hero, m1, B.floor).reason === 'shield')
-  ok('16F（屏障前）不受护盾', calcBattle(fake.hero, m1, B.floor - 1).reason !== 'shield')
-  fake.hero.flags = FLAG.FAY_CHARGED
-  ok('强化后护盾解除、可打', calcBattle(fake.hero, m1, B.floor).ok)
+  const big = (flags) => ({ hp: 999999, atk: 99999, def: 99999, flags })
+  ok('软门槛：未强化 15F 常规怪能打赢（不再判 shield）',
+    calcBattle(big(0), m1, B.floor).ok &&
+    calcBattle(big(0), m1, B.floor).reason !== 'shield')
+  ok('14F（台阶前）不叠加 boost（传 hero 与基线数值相同）',
+    scaledMon(m1, B.floor - 1, big(0)).hp === scaledMon(m1, B.floor - 1).hp)
+  ok('15F 未强化常规怪 HP/ATK 高于基线、怪防恒定（不抬防避免 21 层死局）',
+    (() => { const a = scaledMon(m1, B.floor, big(0)), b = scaledMon(m1, B.floor)
+      return a.hp > b.hp && a.atk > b.atk && a.def === b.def })())
+  ok('灌顶后护盾散去、怪回到基线（HP/ATK 低于未强化）',
+    (() => { const a = scaledMon(m1, B.floor, big(FLAG.FAY_CHARGED))
+             const b = scaledMon(m1, B.floor, big(0))
+             return a.hp === scaledMon(m1, B.floor).hp && b.hp > a.hp && b.atk > a.atk })())
   const elite = MONSTERS.find(m => m.ch === 'X')
-  ok('17F 起常规怪数值上台阶，elite 不叠加 boost（保持 v0.14 语义）',
-    scaledMon(m1, B.floor).hp > scaledMon(m1, B.floor - 1).hp &&
+  ok('elite 不叠加 boost（保持 v0.14 语义）',
+    scaledMon(elite, B.floor, big(0)).hp === scaledMon(elite, B.floor).hp &&
     scaledMon(elite, B.floor).hp ===
       Math.round(FLOOR_SCALE[B.floor + elite.scaleShift].hp * elite.hpW))
   ok('1F (1,2) 是小精灵 e 且 ITEMS 有 npc_fairy',
@@ -1040,14 +1046,14 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
   ok('未持核心撞 e：讲背景、flags 不变、格保留、停原地',
     r.state.hero.flags === 0 && r.state.x === 1 && r.state.y === 1 &&
     tileAt(r.state, 1, 2) === 'e' &&
-    r.events.some(e => e.t === 'msg' && /能量护盾/.test(e.text)))
+    r.events.some(e => e.t === 'msg' && /越晚来/.test(e.text)))
   f0 = newGame(); f0.hero.flags = FLAG.CORE_HELD
   r = resolveStep(f0, 'down')
-  ok('持核心撞 e：消耗核心 + 置 FAY_CHARGED + 幅度 = BARRIER.charge',
+  ok('持核心撞 e：消耗核心 + 置 FAY_CHARGED + 攻/防/血各 ×1.4',
     !(r.state.hero.flags & FLAG.CORE_HELD) && !!(r.state.hero.flags & FLAG.FAY_CHARGED) &&
-    r.state.hero.atk === HERO0.atk + B.charge.atk &&
-    r.state.hero.def === HERO0.def + B.charge.def &&
-    r.state.hero.hp === HERO0.hp + B.charge.hp)
+    r.state.hero.atk === Math.round(HERO0.atk * 1.4) &&
+    r.state.hero.def === Math.round(HERO0.def * 1.4) &&
+    r.state.hero.hp === Math.round(HERO0.hp * 1.4))
   f0 = newGame(); f0.hero.flags = FLAG.FAY_CHARGED
   r = resolveStep(f0, 'down')
   ok('已强化撞 e：闲聊、属性不变、格保留',
@@ -1056,21 +1062,29 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
   const rowsC = FLOORS[B.coreFloor].rows
   let cp = null
   rowsC.forEach((row, y) => { const x = row.indexOf('C'); if (x >= 0) cp = { x, y } })
-  ok('13F 房间有唯一能量核心 C 且与锁匠工具 j 同房（通关必经）',
-    !!cp && rowsC.slice(4, 8).some(row => row.includes('j')) &&
+  ok('17F 商人房有唯一能量核心 C（与 N 同房）、13F 只留锁匠工具 j',
+    !!cp && rowsC.some(row => row.includes('N')) &&
+    FLOORS[12].rows.some(row => row.includes('j')) &&
+    !FLOORS[12].rows.some(row => row.includes('C')) &&
     FLOORS.flatMap(f => f.rows).join('').split('C').length - 1 === 1 &&
     FLOORS.flatMap(f => f.rows).join('').split('e').length - 1 === 1)
-  const fc = newGame(); fc.floor = B.coreFloor; fc.x = cp.x - 1; fc.y = cp.y
-  r = resolveStep(fc, 'right')
+  const cand = [
+    { x: cp.x - 1, y: cp.y, d: 'right' }, { x: cp.x + 1, y: cp.y, d: 'left' },
+    { x: cp.x, y: cp.y - 1, d: 'down' }, { x: cp.x, y: cp.y + 1, d: 'up' },
+  ].filter(o => o.x >= 0 && o.y >= 0 && FLOORS[B.coreFloor].rows[o.y]?.[o.x] === '.')
+  ok('17F 核心至少有一个可站邻格', cand.length > 0)
+  const fc = newGame(); fc.floor = B.coreFloor; fc.x = cand[0].x; fc.y = cand[0].y
+  r = resolveStep(fc, cand[0].d)
   ok('拾取 C 置 CORE_HELD 并把该格清成地板',
     !!(r.state.hero.flags & FLAG.CORE_HELD) && tileAt(r.state, cp.x, cp.y) === '.')
   const sol16 = findSolution()
-  ok('findSolution 通关、完成精灵强化且核心已消耗',
+  ok('findSolution 通关、完成精灵灌顶且核心已消耗',
     !!sol16 && sol16.state.ended === 'win' &&
     !!(sol16.hero.flags & FLAG.FAY_CHARGED) && !(sol16.hero.flags & FLAG.CORE_HELD))
-  ok('每层常规怪 12 只（21F 为 8）、首层 targetLoss 上调到 31',
+  ok('每层实体怪 12 只（常规 + 吸血 9 互补，21F 为 8）、首层 targetLoss=31',
     FLOORS.slice(0, 20).every(f =>
-      f.rows.join('').split('').filter(c => '1245678'.includes(c)).length === 12) &&
+      f.rows.join('').split('').filter(c => '12456789'.includes(c)).length === 12) &&
+    FLOORS[20].rows.join('').split('').filter(c => '12456789'.includes(c)).length === 8 &&
     FLOOR_SCALE[0].targetLoss === 31)
 }
 
@@ -1096,12 +1110,16 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
       dmg17[before.floor] = (dmg17[before.floor] || 0) + (mm ? Number(mm[1]) : 0)
     }
   }
-  ok('FLOOR_SCALE 怪防按每层【首次战斗实测 ATK】的 0.65 建模（误差 <=2）',
-    FLOOR_SCALE.slice(0, 21).every((s, f) =>
+  ok('1F~16F 的 FLOOR_SCALE 怪防仍按每层【首次战斗实测 ATK】的 0.65 建模（误差 <=2）',
+    FLOOR_SCALE.slice(0, 16).every((s, f) =>
       !!fight17[f] && Math.abs(s.def - Math.round(0.65 * fight17[f].atk)) <= 2))
+  ok('v0.18：17F~21F 改按【未强化路径】基准建模（17F=0.65×183=119、21F=0.65×223=145）',
+    FLOOR_SCALE[16].def === Math.round(0.65 * 183) &&
+    FLOOR_SCALE[20].def === Math.round(0.65 * 223) &&
+    FLOOR_SCALE.slice(16, 21).every(s => s.def < 160))
   const total17 = Object.values(dmg17).reduce((a, b) => a + b, 0)
-  ok('全塔总损血较 v0.16 的 6558 上调 20~40%（B 口径目标 +30%）',
-    total17 > 6558 * 1.2 && total17 < 6558 * 1.4, String(total17))
+  ok('v0.19：早强化路径总损血 14000~15500（常规怪 +15% / 守门怪 hp×1.5 / 吸血 15% 三重叠加）',
+    total17 > 14000 && total17 < 15500, String(total17))
   ok('无单层掉血尖峰（最高层损血 < 总损血 / 4）',
     Math.max(...Object.values(dmg17)) < total17 / 4,
     '最高 ' + Math.max(...Object.values(dmg17)))
@@ -1114,23 +1132,102 @@ console.log('\n=== 11. v0.16 小精灵 / 能量核心 / 能量护盾 ===')
   ok('m6 可破防但回合数明显多于常规怪（真挡路、非死局）',
     rw.ok && rs.ok && rw.rounds >= rs.rounds + 2,
     'm6 ' + rw.rounds + ' 回合 vs 常规 ' + rs.rounds + ' 回合')
-  ok('1F / 17F~21F 无高防挡路怪（低层裸属性 / 屏障叠加保护）',
+  ok('1F / 17F~21F 无高防挡路怪（低层裸属性 / 15F 起护盾叠加保护）',
     FLOORS[0].rows.join('').indexOf('6') < 0 &&
     FLOORS.slice(16).every(f => f.rows.join('').indexOf('6') < 0))
   const elite17 = monsterByCh('X')
-  ok('4 处强敌首次进层全打不过、终局回头全可打（v0.14 口径不破）',
-    [2, 8, 13, 17].every(f => {
+  ok('强敌：3F/9F/14F 首次进层仍打不过、4 处终局回头全可打',
+    [2, 8, 13].every(f => {
       const a = calcBattle({ ...(enter17[f] || { hp: 200, atk: 10, def: 10, flags: 0 }) }, elite17, f)
-      const b = calcBattle(st.hero, elite17, f)
-      return !a.ok && b.ok
-    }))
-  ok('17F 未强化护盾硬门槛仍生效（堆 99999 攻防也绕不过）',
+      return !a.ok
+    }) && [2, 8, 13, 17].every(f => calcBattle(st.hero, elite17, f).ok))
+  ok('v0.18 顺序变化：18F 首次进层已完成灌顶（flags 含 FAY_CHARGED），故该处 X 可打',
+    !!(enter17[17] && (enter17[17].flags & FLAG.FAY_CHARGED)))
+  ok('v0.18 软门槛：不回 1F 强化也不会被 shield 拦下（堆 99999 攻防可打）',
     calcBattle({ hp: 999999, atk: 99999, def: 99999, flags: 0 },
-      monsterByCh('1'), BARRIER.floor).reason === 'shield')
-  ok('魔王战仍有非零损血（终局 -126HP 量级）',
+      monsterByCh('1'), BARRIER.floor).ok)
+  ok('魔王战仍有非零损血（终局约 -42HP，为保 5/5 通关刻意不抬魔王）',
     calcBattle(st.hero, monsterByCh('3'), 20).hpCost > 0)
   ok('战斗 242 场、通关存档仍 <= SAVE_LIMIT',
     battles17 === 242 && serialize(st).length <= CONFIG.SAVE_LIMIT)
 }
+// ---- v0.18 多强化时机：5 条路径回放与「晚强化收益更高」对照 ----
+{
+  const stat = (opt) => {
+    const sol = findSolution(opt)
+    if (!sol) return null
+    let s = newGame(), total = 0
+    for (const d of sol.steps) {
+      const b = s.hero.hp
+      const r = resolveStep(s, d); s = r.state
+      total += Math.max(0, b - s.hero.hp)
+      if (s.ended) break
+    }
+    return { ok: s.ended === 'win', total, atk: s.hero.atk, def: s.hero.def,
+             hp: s.hero.hp, flags: s.hero.flags, steps: sol.steps.length }
+  }
+  const early = stat()
+  const d18 = stat({ chargeFloor: 17 }), d19 = stat({ chargeFloor: 18 })
+  const d20 = stat({ chargeFloor: 19 }), none = stat({ noCharge: true })
+  ok('v0.18 五条强化时机路径全部通关（软门槛彻底成立）',
+    !!(early && d18 && d19 && d20 && none &&
+       early.ok && d18.ok && d19.ok && d20.ok && none.ok))
+  ok('晚强化终局 ATK / DEF 高于早强化（收益更高）',
+    !!(early && d20 && d20.atk > early.atk && d20.def > early.def))
+  ok('越晚强化总损血越高、终局 HP 越低（用血换属性）',
+    !!(early && d20 && none && early.total < d20.total && d20.total < none.total &&
+       early.hp > d20.hp && d20.hp > none.hp))
+  ok('完全不强化也能通关且 flags 不含 FAY_CHARGED（软门槛）',
+    !!(none && none.ok && !(none.flags & FLAG.FAY_CHARGED)))
+  ok('默认攻略完成灌顶、核心已消耗',
+    !!(early && (early.flags & FLAG.FAY_CHARGED) && !(early.flags & FLAG.CORE_HELD)))
+  ok('正式回放步数口径不漂移（3410 步）', !!(early && early.steps === 3410))
+}
+
+// ---- v0.19 攻击吸血怪：核心机制离线专项 ----
+{
+  const dm19 = monsterByCh('9')
+  const H19 = (hp, atk, def) => ({ hp, atk, def, flags: 0 })
+  const nb19 = calcBattle(H19(2000, 120, 5000), dm19, 11)
+  const k19 = nb19.rounds - 1
+  ok('v0.19 不管破防：普伤 0 时仍按当前 HP 15% 吸血、hpCost = k×吸血',
+    nb19.monPerHit === 0 && nb19.drainPerHit === Math.round(2000 * 0.15) &&
+    nb19.hpCost === k19 * nb19.drainPerHit && k19 > 0, JSON.stringify(nb19))
+  const lo19 = calcBattle(H19(1000, 120, 5000), dm19, 11)
+  const hi19 = calcBattle(H19(4000, 120, 5000), dm19, 11)
+  ok('v0.19 血量越高越不合算：HP 4 倍则损血精确 4 倍',
+    hi19.hpCost === 4 * lo19.hpCost, lo19.hpCost + ' -> ' + hi19.hpCost)
+  const hi2_19 = calcBattle(H19(1400, 120, 5000), dm19, 11)
+  ok('v0.19 先打怪再捡血瓶省 k×15%×Δ（Δ=400 时省 120 HP）',
+    hi2_19.hpCost - lo19.hpCost === k19 * Math.round(400 * 0.15),
+    String(hi2_19.hpCost - lo19.hpCost))
+  const early19 = calcBattle(newGame().hero, dm19, 0)
+  const sol19 = findSolution()
+  let s19 = newGame()
+  for (const d of sol19.steps) { s19 = resolveStep(s19, d).state; if (s19.ended) break }
+  ok('v0.19 前期精英打不过、终局成长后回头可打',
+    early19.reason === 'unbreakable' && calcBattle(s19.hero, dm19, 0).ok,
+    early19.reason + ' / 终局 ' + calcBattle(s19.hero, dm19, 0).reason)
+  const e11 = scaledMon(dm19, 10), n12 = scaledMon(dm19, 11)
+  ok('v0.19 11F 仍是精英、12F 起回落普通怪（def 143 → 81）',
+    e11.elite === true && n12.elite === false && e11.def > n12.def,
+    e11.def + ' -> ' + n12.def)
+  ok('v0.19 m10 字段：drain0.15 / eliteBefore11 / eliteShift9 / defW1.0',
+    dm19.drain === 0.15 && dm19.eliteBefore === 11 && dm19.eliteShift === 9 && dm19.defW === 1.0)
+  ok('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）',
+    (() => {
+      const dist = FLOORS.map(f => f.rows.join('').split('9').length - 1)
+      return dist.slice(0, 12).every(n => n === 1) &&
+        [13, 15, 17, 19, 21].every(f => dist[f - 1] === 0) &&
+        [14, 16, 18, 20].every(f => dist[f - 1] === 1) &&
+        dist.reduce((a, b) => a + b, 0) === 16
+    })())
+  ok('v0.19 血瓶 ×2 HP 供给（100 / 400）',
+    itemById('potion_s').effect.hp === 100 && itemById('potion_l').effect.hp === 400)
+  ok('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0 / lossGain1.5',
+    monsterByCh('6').hpW === 1.5 && monsterByCh('X').hpW === 1.0 &&
+    readFileSync(new URL('../levels/levels.json', import.meta.url), 'utf8').includes('"lossGain": 1.5'))
+}
+
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

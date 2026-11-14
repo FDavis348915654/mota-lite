@@ -73,25 +73,50 @@ ELITE_SHIFT = 9                          # 强度超前 9 层（用户选「超�
 ELITE_CH = 'X'                           # 宝库守卫字符（原字符集未占用）
 BASE_MOBS = 5                            # 每层普通怪目标数（原 2~3）
 
-# ---- v0.16：小精灵 / 能量核心 / 屏障护盾 --------------------------------
-# 用户三项确认（AskUserQuestion 全选推荐）：核心 13F / 卡关 17F；
-# 能量护盾硬门槛；怪 9->12 + 全塔损血上调约 30%。
-#   1F 出生点旁放常驻小精灵 e：未持核心讲背景 / 持核心则一次性大幅强化；
-#   13F treasure 房放全塔唯一能量核心 C（与锁匠工具 j 同房，通关必经，
-#   玩家不可能「跳过核心直接卡死在 17F」）；
-#   17F 起怪物数值上台阶，未强化时额外带「能量护盾」强制不可破防 ——
-#   商店买攻防 / 法师兑经验都绕不过，保证「不回去强化就一定过不去」。
+# ---- v0.18：任务顺序重排 / 软门槛 / 百分比强化 ----------------------------
+# 用户四项确认（AskUserQuestion）：改软门槛 / 固定百分比×当前属性 /
+# 核心 17F、台阶 15F（用户自定义） / 串一条主线 + 文案补关联。
+#   因果链：15F 救盗贼 T -> 13F 取锁匠工具 j -> 回 15F 交工具，盗贼撬开
+#   16F 封印门 Z -> 封印破、能量泄满上层 -> 15F 起常规怪罩「能量护盾」
+#   = 数值上台阶（明显变强、打得吃力，但能打 = 软门槛）-> 磕绊到 17F
+#   商人房拿到能量核心 C -> 回 1F 找塔灵小精灵 e 灌顶 -> 护盾散去
+#   （boost 取消、怪回到基线）+ 自身攻防血按【强化那一刻当前值】×(1+ratio)。
+#   早强化 = 早点让怪回到基线、少损血；晚强化 = 多扛几层苦，但基数长大后
+#   百分比加成的绝对值更高 —— 用户要的真取舍。
+#   注意：17F 是 merchant 房（不是 treasure），inner 有 20 格只用了 2 格，
+#   核心直接放第 3 格，不改 ROOM_KIND、不挪商人（避免动 2F/17F 经济）。
 FAIRY_CH = 'e'
 CORE_CH = 'C'
-CORE_FLOOR = 13          # 1-based
-BARRIER_FLOOR = 17       # 1-based
-# v0.17：常规怪防已抬到 0.65·玩家实测ATK，且 scaledMon 的 atk 倍率是「乘法
-# 作用在 atk 绝对值」而损血取 (atk - 玩家DEF) 的差值 —— 旧 1.25 会把净伤
-# 放大十几倍（17F 实测 900+HP/只、20 回合）。故收敛为温和台阶：
-# hp 1.1 / atk 1.05 / def 1.0，17F 起每怪损血约为 16F 的 2~3 倍，仍明显
-# 但不死局。护盾硬门槛与强化解除语义完全不变。
-BARRIER_BOOST = {'hp': 1.1, 'atk': 1.05, 'def': 1.0}
-FAIRY_CHARGE = {'atk': 80, 'def': 60, 'hp': 1200}
+CORE_FLOOR = 17          # 1-based，v0.18：13F -> 17F 商人房
+BARRIER_FLOOR = 15       # 1-based，v0.18：17F -> 15F（盗贼开锁层起）
+# v0.18：boost 只在「未强化」期间生效（护盾），强化后取消、怪回到基线。
+# 关键约束：怪防按 0.65·玩家实测ATK 建模，抬 def 会直接把 perHit 压成 <=0
+# 造成 21 层 unbreakable 死局（v0.17 实测），故 def 恒为 1.0；台阶只靠
+# hp 拉长回合数 + atk 小幅抬净伤（atk 是乘法作用在绝对值、损血取差值，
+# 1.25 会放大十几倍，故贴近 1.0）。数值由正式回放校准：
+#   18 组 × 5 条强化时机搜索：hp1.2/atk1.04 是唯一「早强化 / 延后到
+#   18F、19F、20F / 完全不强化」5 条路径全通关的组合（软门槛彻底成立）：
+#   立刻强化总损血 4684，延后到 20F 6819，完全不强化 8990 —— 越晚越吃苦。
+#   正式回放 3385 步 / 600 轮 / 242 场战斗，尖峰在开锁后的 15F~16F。
+BARRIER_BOOST = {'hp': 1.2, 'atk': 1.04, 'def': 1.0}
+FAIRY_CHARGE_RATIO = 0.40   # 灌顶：攻/防/血 各 ×1.40（按强化时当前值）
+
+# ---- v0.19：攻击吸血怪 / 前期精英化 / 守门怪强化 / 常规怪上调 ---------------
+# 用户四项确认（AskUserQuestion）：固定百分比·每回合吸 / r=15% + 常规怪上调 /
+# 4 处宝库守卫只拉高强度；自定义「作为后期普通怪、前期精英怪 + 守门怪大幅提升」。
+# 硬约束（/tmp/v19_bounds.mjs 实测）：r=15% 时 k×r < 1 -> 吸血怪最多承受 6 次
+# 怪物攻击；石头人 m6 k 最大 18、骷髅兵 m4 k 最大 10，挂吸血会 14/21 层必死。
+# 故吸血怪独立短回合模板（hpW/defW 压到 k<=3），且不参与守门怪替换。
+DRAIN_CH = '9'                 # 吸血怪字符（1-8 / X 已占用）
+DRAIN_RATIO = 0.15             # 每次怪物攻击按【战斗开始时玩家 HP】的 15% 吸血
+DRAIN_ELITE_BEFORE = 11        # 0-based 楼层索引：< 11（即 1F~11F）套超前层 = 精英
+DRAIN_ELITE_SHIFT = 9          # 前期精英超前 9 层（复用 FLOOR_SCALE 外推段）
+WALL_GUARD_HPW = 1.5           # 守门怪 m6：hpW 1.0 -> 1.5（回合 6~11 -> 9~17）
+ELITE_HPW = 1.0                # 4 处宝库守卫：hpW 0.8 -> 1.0（只拉高强度）
+# HP 供给校准：常规怪 +15% / 守门怪 hp×1.5 / 吸血按 HP 15% 抽血三重叠加后，
+#   原血瓶 50/200 跟不上（前 16 层回血 6600 < 损血 6785，16F HP 见底）。
+#   ×2 成 100/400 后 5 条强化时机路径全通关；且血越厚吸血越疼，反而把
+#   「先打怪还是先捡血瓶」的差值 k×15%×Δ 也放大一倍，强化核心取舍。
 
 # 门 / 楼梯 / 房间 / 王座的保护邻域：隔间墙与宝库都不得占用
 PROTECTED_BASE = {(1, 1), (2, 1), (1, 2), (11, 13), (10, 13), (11, 12),
@@ -177,17 +202,30 @@ CURVE_D = [20, 43, 46, 56, 76, 92, 95, 103, 113, 126, 132, 135, 155, 178,
 # 0.30·pa、rounds=3，偏差被掩盖；v0.17 抬到 0.65·pa 后 perHit 对 ATK 极敏感，
 # 继续用建模值会让 1F 守路怪 perHit=1 / 30 回合 / lethal（实测死局）。
 ACT_A = [20, 23, 26, 26, 45, 58, 64, 67, 103, 103, 106, 125, 138, 151, 151,
-         170, 263, 266, 269, 300, 303]
+         170, 183, 186, 189, 220, 223]
+# v0.18 关键校准：上表 17F~21F（索引 16~20）由 v0.17 实测值
+#   263/266/269/300/303 减去 v0.16 固定强化 +80 ATK 得到，是
+#   「未强化路径」进层基准。v0.17 的表来自 v0.16 回放，而 v0.16 在
+#   13F 拿核心、17F 卡关后回 1F 已强化，故 17F 起全是强化后属性；
+#   v0.18 核心后移到 17F，玩家未强化进层，照旧建模会 unbreakable /
+#   38 回合 lethal 死局。诊断实测 17F 未强化 ATK=183 与 263-80 精确吻合。
+#   1F~16F 保持 v0.17 已校准数值完全不动。
 ACT_D = [20, 26, 49, 49, 62, 88, 104, 104, 125, 141, 144, 147, 166, 192, 205,
-         205, 278, 304, 310, 325, 338]
+         205, 218, 244, 250, 265, 278]
+# v0.18：17F~21F 同理减去 v0.16 固定强化 +60 DEF（诊断实测 17F 未强化
+#   DEF=218 与 278-60 精确吻合）。怪 ATK = ACT_D + monPerHit，故减基准
+#   不改净伤，只让「未强化玩家 DEF」与建模值重新对齐。
 CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16, lossMul=1.3,
                  # v0.17「高防怪」：常规怪防按【玩家真实 ATK】的比例直接给，
                  # 不再由 per_hit 反推（v0.16 实际只有约 0.30·pa）。
                  defRatio=0.65,
+                 # v0.18：17F~21F 的 ACT_A/ACT_D 已重建为「未强化路径」基准，
+                 # 全局 defRatio 仍为 0.65，1F~16F 数值与 v0.17 完全一致。
                  # 目标战斗回合：防御抬高后每击变薄，靠多打几回合把损血还回去。
                  battleRounds=5,
-                 # 每怪损血相对 v0.16 上调 30%（B 硬核口径）。
-                 lossGain=1.3,
+                 # v0.19：常规怪损血再上调 15%（1.3 -> 1.5）。只作用于怪 ATK
+                 # 净伤、不动 battleRounds，故回合数 k 不变 -> 吸血怪安全上界不破。
+                 lossGain=1.5,
                  # v0.16 实测标定：全塔实际总损血 6558 ≈ sum(targetLoss) 1312 × 5.0。
                  # 用单一标量把「摊薄基数」换算成真实每怪损血，避免逐层锯齿。
                  costMul=5.0)
@@ -198,6 +236,10 @@ BOSS_FINAL = {'hp': 950, 'atk': 380, 'def': 56}
 
 # 分层投放：低层入门怪 → 中层进阶 → 高层高危 → 顶层精英
 def tier_chars(n):
+    # v0.19：吸血怪 9 不进 tier_chars 池。实测若让它占池的 1/4，后期每层
+    #   会有约 3 只吸血怪，每只按当前 HP 抽 15%，几只连抽直接把 HP 腰斩
+    #   （12F~15F 累计损血 4049、16F HP 见底死局）。改由 place_entities
+    #   按 floor_no 投放：前期每层 1 只精英、后期隔层 1 只普通，密度可控。
     if n <= 5:   return ['1', '2']
     if n <= 11:  return ['2', '4', '6']
     if n <= 17:  return ['4', '5', '7']
@@ -237,7 +279,7 @@ def retier_monsters(floors, skip_by_floor=None):
 
 
 def count_mobs(floors):
-    return [sum(''.join(f['rows']).count(c) for c in '1245678') for f in floors]
+    return [sum(''.join(f['rows']).count(c) for c in '1245678' + DRAIN_CH) for f in floors]
 
 
 def build_floor_scale(cnt):
@@ -269,6 +311,8 @@ def build_floor_scale(cnt):
         # 每怪目标损血：v0.16 实测标定 costMul=5.0 后再乘 lossGain
         cost = floor_loss / max(1, cnt[f]) * c.get('costMul', 5.0) * gain
         # v0.17 核心：怪防按玩家【实测】ATK 的比例直接给
+        # v0.18：ACT_A[f] 在 17F~21F 已是「未强化路径」实测基准，故全局
+        # defRatio 保持 0.65 即可自然留出破防余量（见数组注释 / 开发盘点 0-P）。
         dfn = round(c.get('defRatio', 0.65) * pa)
         per_hit = max(1, pa - dfn)
         hp = (R - 1) * per_hit + 1
@@ -714,7 +758,7 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
     # v0.17：第一道闸墙瓶颈 + 第一个凹室入口改投高防低攻挡路怪 WALL_GUARD_CH；
     #   其余守路位保持 guard_pool 的常规怪种，避免整层 3 道瓶颈全变成磨血怪。
     #   2F~16F 才投：1F 玩家裸属性 ATK 只有 20、余量太小（实测 perHit=1 会
-    #   lethal 封死主路）；17F 起有屏障倍率叠加，高防怪会变成 20 回合尖峰。
+    #   lethal 封死主路）；15F 起有护盾倍率叠加，高防怪会变成 20 回合尖峰。
     #   这两个坐标都在 skip_by_floor（gates / alcove entry / 割点）里，
     #   retier_monsters 不会把它们替换掉。
     use_wall = 2 <= floor_no <= 16
@@ -759,8 +803,30 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
     #    守怪都算在内，统一由 count_mobs 统计后交给 build_floor_scale 按怪数
     #    摊薄 —— 单层目标总损血不变，只战斗场次变多、每场更轻（保持曲线）。
     placed_guards = len(gates) + len(alcoves) + (1 if has_room else 0)
-    for k in range(max(0, TARGET_MOBS - placed_guards)):
+    # v0.19：前期每层 1 只精英 + 后期隔层 1 只普通，占一个散怪名额，保持
+    #   TARGET_MOBS 与单层损血摊薄不变。前期（0-based floor < eliteBefore）
+    #   由 scaledMon 套 eliteShift 自动成为「打不过、后期回头打」的精英，
+    #   12F 起回落到常规池 = 后期普通怪；9 不在 retier 替换集里，不会被冲掉。
+    #   密度硬约束：r=15% 按玩家当前 HP 抽血，同层 3 只连抽会直接腰斩
+    #   （12F~15F 累计损血 4049、16F HP 见底死局）。隔层 1 只 + 血瓶 ×2
+    #   经 15 组搜索是「5 条强化时机路径全通关」的最克制组合。
+    drain_here = floor_no <= DRAIN_ELITE_BEFORE or floor_no % 2 == 0
+    extra = 1 if drain_here else 0
+    for k in range(max(0, TARGET_MOBS - placed_guards - extra)):
         x, y = take_rest(); g[y][x] = ['1', '2', '4'][(floor_no + k) % 3]
+    if drain_here:
+        # v0.19：精英吸血怪必须落在纯支线（非几何割点）。它初期 unbreakable，
+        #   被 findPath 当墙；若落在闸墙缺口正上方这类唯一通道格，会把主路
+        #   直接切断（1F 实测 9@10,5 死局）。用生成期 BFS 把该格当墙验证
+        #   (1,1)->(11,13) 仍连通，不通就换下一个后带坐标。
+        spot = None
+        for _ in range(80):
+            c = take_rest()
+            if not c: break
+            if _reach(g, (1, 1), (11, 13), {c}):
+                spot = c; break
+        if spot:
+            x, y = spot; g[y][x] = DRAIN_CH
 
     # 6) 暗格 H（仅当该层有可用 story key）—— 后带
     if floor_no in HIDDEN_KEYS:
@@ -773,6 +839,8 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
         if kind == 'merchant':
             g[inner[0][1]][inner[0][0]] = 'N'   # 商人（商店）
             g[inner[1][1]][inner[1][0]] = 'S'   # 房内铁盾
+            if floor_no == CORE_FLOOR:
+                g[inner[2][1]][inner[2][0]] = CORE_CH   # v0.18：能量核心移到 17F 商人房
         elif kind == 'mage':
             g[inner[0][1]][inner[0][0]] = 'M'   # 法师（救援奖励）
             g[inner[1][1]][inner[1][0]] = 'P'
@@ -791,8 +859,10 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
         else:  # treasure
             loot = ['S', 'P', 'a']
             # v0.13 盗贼任务线道具：13F 藏「锁匠工具」、19F 藏「钱袋」
+            # v0.18：能量核心 C 已从 13F 移到 17F 商人房（见 merchant 分支）。
+            # 13F 只留锁匠工具 j，解开「核心与硬门槛同房」的旧耦合，让
+            # 盗贼线（15F 开锁）与精灵线（17F 取核心）前后相接、互为因果。
             if floor_no == 13: loot.append('j')
-            if floor_no == CORE_FLOOR: loot.append(CORE_CH)   # v0.16 能量核心（与 j 同房，通关必经）
             if floor_no == 19: loot.append('q')
             for c, (x, y) in zip(loot, inner):
                 g[y][x] = c
@@ -974,8 +1044,8 @@ def build():
             })
 
     items = [
-        {'id': 'potion_s', 'ch': 'p', 'name': '小血瓶', 'effect': {'hp': 50}},
-        {'id': 'potion_l', 'ch': 'P', 'name': '大血瓶', 'effect': {'hp': 200}},
+        {'id': 'potion_s', 'ch': 'p', 'name': '小血瓶', 'effect': {'hp': 100}},   # v0.19：×2 HP 供给校准
+        {'id': 'potion_l', 'ch': 'P', 'name': '大血瓶', 'effect': {'hp': 400}},   # v0.19：×2 HP 供给校准
         {'id': 'gem_atk', 'ch': 'a', 'name': '红宝石', 'effect': {'atk': 3}},
         {'id': 'gem_def', 'ch': 'd', 'name': '蓝宝石', 'effect': {'def': 3}},
         {'id': 'sword', 'ch': 's', 'name': '铁剑', 'effect': {'atk': 10}},
@@ -995,7 +1065,7 @@ def build():
         {'id': 'npc_elder', 'ch': 'E', 'name': '被困的老者', 'effect': {'flag': 2, 'bomb': 1}},
         {'id': 'quest_lockpick', 'ch': 'j', 'name': '锁匠工具', 'effect': {'flag': 4}},
         {'id': 'quest_moneybag', 'ch': 'q', 'name': '钱袋', 'effect': {'flag': 8}},
-        # v0.16：能量核心（13F 房间，全塔唯一）—— effect.flag=128 写 CORE_HELD；
+        # v0.18：能量核心（17F 商人房，全塔唯一）—— effect.flag=128 写 CORE_HELD；
         # 小精灵是常驻 NPC，不放 effect（resolveStep 单独三态分支），但必须进
         # ITEMS 表，solver.scan() 才会在「持核心且未强化」时把它列为目标。
         {'id': 'core_energy', 'ch': CORE_CH, 'name': '能量核心', 'effect': {'flag': 128}},
@@ -1025,13 +1095,28 @@ def build():
     #   注意：字面「怪防≈怪攻」不可行 —— 怪攻按玩家 DEF 建模、而 DEF 全程
     #   高于 ATK，实测会让 21 层全部 unbreakable（见开发盘点 0-O）。
     {'id': 'm6', 'ch': '6', 'name': '石头人', 'hp': 60, 'atk': 12, 'def': 26, 'gold': 14,
-     'exp': 11, 'bg': '#8d6e63', 'hpW': 1.0, 'atkW': 0.92, 'defW': 1.23},
+     'exp': 11, 'bg': '#8d6e63', 'hpW': WALL_GUARD_HPW, 'atkW': 0.92, 'defW': 1.23},  # v0.19：守门怪大幅提升（只抬 hp，不碰 def 死局线）
     {'id': 'm7', 'ch': '7', 'name': '兽人', 'hp': 55, 'atk': 24, 'def': 7, 'gold': 15,
          'exp': 10, 'bg': '#d84315', 'hpW': 1.15, 'atkW': 1.05, 'defW': 0.9},
     {'id': 'm5', 'ch': '5', 'name': '暗法师', 'hp': 45, 'atk': 26, 'def': 6, 'gold': 16,
          'exp': 12, 'bg': '#5c6bc0', 'hpW': 0.9, 'atkW': 0.08, 'defW': 0.8, 'pierce': True},
     {'id': 'm8', 'ch': '8', 'name': '魔法警卫', 'hp': 50, 'atk': 20, 'def': 10, 'gold': 18,
          'exp': 13, 'bg': '#00897b', 'hpW': 1.0, 'atkW': 0.10, 'defW': 1.0, 'pierce': True},
+        # v0.19：攻击吸血怪（全塔唯一新怪种）。drain = 每次怪物攻击按
+        # 【战斗开始时玩家当前 HP】的固定百分比扣血，独立于破防伤害，
+        # 普伤为 0 也照扣；只扣玩家 HP、不回怪血（避免正反馈死局）。
+        # 关键约束 k×drain < 1：r=15% -> k<=6，故 hpW=0.55 / defW=0.75
+        # 把回合压到 2~3（实测余量充足）；atkW 压低，让吸血而非普伤成为主损血。
+        # defW 必须恒为 1.0：前期精英套 eliteShift=9 后怪 def 会高于玩家进层
+        # ATK -> unbreakable（正是「前期打不过」）；若压低 defW 反而能破防，
+        # perHit 变薄、回合暴涨到 7，r=15% 连吸 6 次抽走九成血（9F 实测死局）。
+        # 前期（0-based floor < eliteBefore）由 scaledMon 套 eliteShift=9
+        # 成为「打不过、后期回头打」的精英；12F 起回落到常规散怪池。
+        {'id': 'm10', 'ch': DRAIN_CH, 'name': '噬血蝠', 'hp': 20, 'atk': 6, 'def': 2,
+         'gold': 12, 'exp': 14, 'bg': '#c2185b',
+         'hpW': 0.55, 'atkW': 0.5, 'defW': 1.0,
+         'drain': DRAIN_RATIO, 'eliteBefore': DRAIN_ELITE_BEFORE,
+         'eliteShift': DRAIN_ELITE_SHIFT},
         # v0.14 精英怪「宝库守卫」：scaleShift 让 scaledMon 取 FLOOR_SCALE[floor+9]
         # （含 21F 之上的外推段），于是同一只怪在 3F 就是 12F 强度、在 18F 更远超终局。
         # 初期 atk 破不了防 / 损血致命，被 resolveStep 拦下提示「硬拼会阵亡」；
@@ -1055,7 +1140,7 @@ def build():
         #   破不了防。按正式回放首次/终局属性三维搜索（hpW/atkW/defW）重校为
         #   0.8 / 1.25 / 1.0：4 处首次仍打不过（3F/9F/14F 破不了防、18F 会
         #   阵亡），终局回头全可打且损血 0/112/572/1491 梯度递增、回合 1~8。
-        'hpW': 0.8, 'atkW': 1.25, 'defW': 1.0,
+        'hpW': ELITE_HPW, 'atkW': 1.25, 'defW': 1.0,   # v0.19：4 处守卫只拉高强度
          'scaleShift': ELITE_SHIFT, 'elite': True},
         # 魔王：独立终局数值，不参与逐层缩放（经典魔塔 Boss 惯例）；通关即终局，经验无意义
         {'id': 'm3', 'ch': '3', 'name': '魔王', 'hp': BOSS_FINAL['hp'],
@@ -1067,7 +1152,7 @@ def build():
         'y': '钥', 'b': '钥', 'r': '钥',
         'p': '+', 'P': '++', 'a': '攻', 'd': '防', 's': '剑', 'S': '盾', 'g': '金',
         'F': '飞', 'o': '炸', 'I': '鉴', 'M': '法', 'T': '盗', 'H': '',
-        'E': '老', 'j': '具', 'q': '袋', 'X': '卫', 'e': '灵', 'C': '核',
+        'E': '老', 'j': '具', 'q': '袋', 'X': '卫', 'e': '灵', 'C': '核', '9': '血',
         'U': '↑', 'D': '↓', 'W': '王', 'N': '商',
     }
     tile_color = {
@@ -1079,7 +1164,7 @@ def build():
         's': '#cfd8dc', 'S': '#90a4ae', 'g': '#ffca28',
         'F': '#4dd0e1', 'o': '#546e7a', 'I': '#ba68c8', 'M': '#7e57c2', 'T': '#8d6e63',
         'E': '#bcaaa4', 'j': '#b0bec5', 'q': '#ffca28', 'X': '#ff7043',
-        'e': '#66e0c8', 'C': '#8c7bff',
+        'e': '#66e0c8', 'C': '#8c7bff', '9': '#c2185b',
         'H': '#1b2430', 'U': '#66bb6a', 'D': '#8d6e63', 'W': '#ab47bc', 'N': '#26c6da',
     }
     # v0.9：主题接线（拼进 name，HUD / 图鉴 / 载入日志直接可见）
@@ -1094,8 +1179,9 @@ def build():
     cut_by_floor = []
     for f in floors:
         rows = f['rows']
+        # v0.19：吸血怪 9 也纳入割点检测（虽然投放时已各自校验，双保险）
         mons = [(x, y) for y in range(1, H - 1) for x in range(1, W - 1)
-                if rows[y][x] in '1245678']
+                if rows[y][x] in '1245678' + DRAIN_CH]
         cut_by_floor.append({(x, y) for x, y in mons
                              if not _reach(rows, (1, 1), (11, 13), {(x, y)})})
     skip_by_floor = [set(gates_by_floor[i]) | {a['entry'] for a in alcoves_by_floor[i]}
@@ -1107,8 +1193,8 @@ def build():
 
     data = {
         'meta': {
-            'schema': 8,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 10,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈 + v0.18 任务顺序重排/核心移 17F 商人房/台阶提前 15F/软门槛/强化改按当前值百分比/护盾加成强化后取消 + v0.19 攻击吸血怪 9（按玩家当前 HP 15%/次、独立于破防伤害）/前期精英化 eliteBefore/12F 起进常规池/守门怪 hp×1.5/常规怪损血 ×1.15/4 处宝库守卫强度上调）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},
@@ -1126,16 +1212,17 @@ def build():
         'hidden': hidden_cfg,
         'secret': secret_cfg,
         'floorScale': floor_scale,
-        # v0.16：屏障配置（floor/coreFloor/fairyFloor 均为 0-based 楼层索引）。
-        # boost 只作用于「屏障层起、非 elite」的常规怪；未强化时 calcBattle 再
-        # 强制 unbreakable（能量护盾），强化后护盾解除、靠 charge 的强化属性打
-        # 这个数值台阶。强化幅度与倍率都是可调参数，实测校准见开发盘点 0-N。
+        # v0.18：屏障配置（floor/coreFloor/fairyFloor 均为 0-based 楼层索引）。
+        # boost = 未强化期间的「能量护盾」数值台阶，只在 scaledMon 拿到 hero
+        # 且未 FAY_CHARGED 时叠加；强化后取消、常规怪回到 FLOOR_SCALE 基线。
+        # chargeRatio = 灌顶时攻/防/血按【当前值】乘的倍率（软门槛，
+        # 不强化也能通关，只是 15F 起一直吃力）。实测校准见开发盘点 0-P。
         'barrier': {
             'floor': BARRIER_FLOOR - 1,
             'coreFloor': CORE_FLOOR - 1,
             'fairyFloor': 0,
             'boost': BARRIER_BOOST,
-            'charge': FAIRY_CHARGE,
+            'chargeRatio': FAIRY_CHARGE_RATIO,
         },
     }
     with open(os.path.join(ROOT, 'levels', 'levels.json'), 'w', encoding='utf-8') as f:
@@ -1157,8 +1244,11 @@ def build():
         if 'E' in joined: special.append('老者E')
         if 'j' in joined: special.append('锁匠工具j')
         if 'q' in joined: special.append('钱袋q')
+        if 'C' in joined: special.append('能量核心C')
         if 'N' in joined: special.append('商人N')
         print(f"  {i+1:2d}F {f['theme']:6s} {room:5s} 实体{entities:2d} " + ' '.join(special))
+    drain_cnt = sum(''.join(f['rows']).count(DRAIN_CH) for f in floors)
+    print('v0.19 吸血怪 9 总数:', drain_cnt, '（1F~11F 每层精英 / 12F 起隔层普通）')
     tx = sum(''.join(f['rows']).count(ELITE_CH) for f in floors)
     print('v0.15 走廊闸墙瓶颈:', sum(len(g) for g in gates_by_floor), '处（每层',
           min(len(g) for g in gates_by_floor), '~', max(len(g) for g in gates_by_floor),

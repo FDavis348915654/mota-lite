@@ -268,9 +268,16 @@ ok('CHANGELOG 有 v0.15.0 且说明走廊 / 瓶颈 / 清层节奏',
 ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互等待）',
   CHANGELOG.some(c => c.v === 'v0.16.0' && c.note.includes('小精灵') &&
     c.note.includes('能量核心') && c.note.includes('能量护盾') && c.note.includes('交互等待')))
-ok('CHANGELOG 首条为 v0.17.0 且说明怪防 / 高防挡路怪 / 难度提高',
-  CHANGELOG[0].v === 'v0.17.0' && CHANGELOG[0].note.includes('防御') &&
-  CHANGELOG[0].note.includes('挡路') && CHANGELOG[0].note.includes('难度'))
+ok('CHANGELOG 保留 v0.17.0 条目（怪防 / 高防挡路怪 / 难度提高）',
+  CHANGELOG.some(c => c.v === 'v0.17.0' && c.note.includes('防御') &&
+    c.note.includes('挡路') && c.note.includes('难度')))
+ok('CHANGELOG 首条为 v0.19.0 且说明攻击吸血怪 / 不管破防 / 先打怪还是先捡血瓶 / 守门怪强化',
+  CHANGELOG[0].v === 'v0.19.0' && CHANGELOG[0].note.includes('攻击吸血怪') &&
+  CHANGELOG[0].note.includes('不管能不能破防') && CHANGELOG[0].note.includes('先打怪还是先捡血瓶') &&
+  CHANGELOG[0].note.includes('守门怪') && CHANGELOG[0].note.includes('噬血蝠'))
+ok('CHANGELOG 保留 v0.18.0 条目（任务顺序重排 / 软门槛 / 百分比灌顶 / 剧情深度）',
+  CHANGELOG.some(c => c.v === 'v0.18.0' && c.note.includes('任务顺序重排') &&
+    c.note.includes('软门槛') && c.note.includes('百分比') && c.note.includes('剧情深度')))
 
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
@@ -297,10 +304,10 @@ ok('make_levels.py 有闸墙 / 凹室 / 第一带 / 守路怪池',
   genPy.includes('def gate_skeleton') && genPy.includes('def add_alcoves') &&
   genPy.includes('def start_region') && genPy.includes('def guard_pool') &&
   genPy.includes('GATE_TARGET'))
-ok('make_levels.py 闸墙起始行 >= y4 且强敌加权已校准（v0.17 hpW0.8/atkW1.25/defW1.0）',
+ok('make_levels.py 闸墙起始行 >= y4 且 m9 强度改用 ELITE_HPW=1.0 常量（v0.19 只拉高强度）',
   genPy.includes('range(4, 12)') &&
-  genPy.includes("'hpW': 0.8") && genPy.includes("'atkW': 1.25") &&
-  genPy.includes("'defW': 1.0"))
+  genPy.includes('ELITE_HPW = 1.0') && genPy.includes("'atkW': 1.25") &&
+  genPy.includes("'hpW': ELITE_HPW, 'atkW': 1.25, 'defW': 1.0"))
 ok('solver.js 强敌纯支线 + 保护阈值放大（v0.16 含精灵往返 6000/1400）',
   read('solver.js').includes('!mon.elite') &&
   read('solver.js').includes('guarded.has(key)') &&
@@ -312,19 +319,19 @@ ok('browser_check.mjs 有 v0.15 走廊拦路端到端专项',
   browserCheck.includes('v0.15 走廊'))
 
 // ---- v0.16 小精灵 / 能量核心 / 能量护盾 / 交互等待：静态防漂移 ----
-ok('make_levels.py 有 v0.16 常量（精灵 e / 核心 C / 17F 屏障 / 怪数 12 / 损血×1.3）',
+ok('make_levels.py 有 v0.16 基础常量（精灵 e / 核心 C / 怪数 12 / 损血×1.3）',
   genPy.includes("FAIRY_CH = 'e'") && genPy.includes("CORE_CH = 'C'") &&
-  genPy.includes('BARRIER_FLOOR = 17') && genPy.includes('TARGET_MOBS = 12') &&
-  genPy.includes('lossMul=1.3'))
+  genPy.includes('TARGET_MOBS = 12') && genPy.includes('lossMul=1.3'))
 ok('levels.json 有 barrier 表且 build_tables.py 导出 BARRIER',
   read('tools/build_tables.py').includes("('BARRIER',") &&
   read('tables.js').includes('export const BARRIER'))
-ok('logic.js 有 flags 扩位 / 能量护盾 / 精灵三态分支',
+ok('logic.js 有 flags 扩位 / 精灵三态分支 / 软门槛（无 shield 早退）',
   read('logic.js').includes('CORE_HELD: 128') &&
   read('logic.js').includes('FAY_CHARGED: 256') &&
-  read('logic.js').includes("reason: 'shield'") &&
+  !read('logic.js').includes("reason: 'shield'") &&
   read('logic.js').includes('flags > 511') &&
-  read('logic.js').includes("if (t === 'e')"))
+  read('logic.js').includes("if (t === 'e')") &&
+  read('logic.js').includes('chargeRatio'))
 ok('solver.js 有精灵回头往返 + 保护阈值 6000/1400',
   read('solver.js').includes('backForFairy') &&
   read('solver.js').includes('BARRIER.floor') &&
@@ -344,26 +351,96 @@ ok('browser_check.mjs 有 v0.16 小精灵端到端专项',
   browserCheck.includes('v0.16 小精灵'))
 
 // ---- v0.17 高防怪 / 破防临界 / 挡路怪：静态防漂移 ----
-ok('make_levels.py 有实测属性表 ACT_A / ACT_D 与 v0.17 曲线参数',
+ok('make_levels.py 有实测属性表 ACT_A / ACT_D 与 v0.19 曲线参数（lossGain=1.5）',
   genPy.includes('ACT_A = [') && genPy.includes('ACT_D = [') &&
   genPy.includes('defRatio=0.65') && genPy.includes('battleRounds=5') &&
-  genPy.includes('lossGain=1.3') && genPy.includes('costMul=5.0'))
+  genPy.includes('lossGain=1.5') && genPy.includes('costMul=5.0'))
 ok('make_levels.py build_floor_scale 按「先定怪防再反解 HP/ATK」',
   genPy.includes("dfn = round(c.get('defRatio', 0.65) * pa)") &&
   genPy.includes('mon_per_hit = cost / (R - 1)'))
 ok('make_levels.py 有高防挡路怪 WALL_GUARD_CH + 2F~16F 投放层限制',
   genPy.includes("WALL_GUARD_CH = '6'") && genPy.includes('use_wall = 2 <= floor_no <= 16'))
-ok('make_levels.py 石头人 m6 为高防低攻（defW1.23 / atkW0.92 / hpW1.0）',
-  genPy.includes("'hpW': 1.0, 'atkW': 0.92, 'defW': 1.23"))
+ok('make_levels.py 守门怪 m6 hpW 大幅提升到 WALL_GUARD_HPW=1.5（defW1.23 / atkW0.92 不动）',
+  genPy.includes('WALL_GUARD_HPW = 1.5') &&
+  genPy.includes("'hpW': WALL_GUARD_HPW, 'atkW': 0.92, 'defW': 1.23"))
 ok('make_levels.py 常规怪 atkW 收敛 / pierce 权重减半（防净伤放大）',
   genPy.includes("'atkW': 0.08") && genPy.includes("'atkW': 0.10") &&
   genPy.includes("'atkW': 1.05, 'defW': 0.9"))
-ok('make_levels.py BARRIER_BOOST 收敛为温和台阶（hp1.1/atk1.05/def1.0）',
-  genPy.includes("BARRIER_BOOST = {'hp': 1.1, 'atk': 1.05, 'def': 1.0}"))
-ok('make_levels.py meta.schema = 8', genPy.includes("'schema': 8"))
-ok('levels.json 有 defRatio 曲线与 schema 8',
+ok('make_levels.py BARRIER_BOOST 收敛为温和台阶（hp1.2/atk1.04/def1.0）',
+  genPy.includes("BARRIER_BOOST = {'hp': 1.2, 'atk': 1.04, 'def': 1.0}"))
+ok('make_levels.py meta.schema = 10（v0.19 攻击吸血怪 / 前期精英化）', genPy.includes("'schema': 10"))
+ok('levels.json 有 defRatio 曲线与 schema 10',
   read('levels/levels.json').includes('"defRatio": 0.65') &&
-  read('levels/levels.json').includes('"schema": 8'))
+  read('levels/levels.json').includes('"schema": 10'))
 ok('browser_check.mjs 有 v0.17 高防端到端专项',
   browserCheck.includes('v0.17 高防'))
+
+// ---- v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 / 剧情链：静态防漂移 ----
+ok('make_levels.py：核心 17F / 台阶 15F / 百分比灌顶常量',
+  genPy.includes('CORE_FLOOR = 17') && genPy.includes('BARRIER_FLOOR = 15') &&
+  genPy.includes('FAIRY_CHARGE_RATIO = 0.40') &&
+  genPy.includes('chargeRatio') && genPy.includes("g[inner[2][1]][inner[2][0]] = CORE_CH"))
+ok('make_levels.py：ACT_A/ACT_D 的 17F~21F 段重建为未强化基准',
+  genPy.includes('183, 186, 189, 220, 223') &&
+  genPy.includes('218, 244, 250, 265, 278') &&
+  genPy.includes('未强化路径'))
+ok('make_levels.py：13F treasure 房不再投放核心 C',
+  !genPy.includes("if floor_no == CORE_FLOOR: loot.append(CORE_CH)"))
+ok('logic.js：scaledMon 增第三参数 hero（默认 null = 基线不套加成）',
+  read('logic.js').includes('export function scaledMon(mon, floor, hero)') &&
+  read('logic.js').includes('const shielded = !!(BARRIER && hero'))
+ok('logic.js：精灵灌顶按当前值百分比（Math.round + chargeRatio）',
+  read('logic.js').includes('Math.round(s.hero.atk * (1 + ratio))') &&
+  read('logic.js').includes('BARRIER.chargeRatio'))
+ok('solver.js：findSolution(opts) 支持 noCharge / chargeFloor（5 条路径可验证）',
+  read('solver.js').includes('export function findSolution(opts)') &&
+  read('solver.js').includes('opts.noCharge') &&
+  read('solver.js').includes('opts.chargeFloor'))
+ok('texts.js：剧情链互文（法师认符文 / 老者警告 / 盗贼撬开泄盾 / 商人摊后核心）',
+  read('texts.js').includes('塔灵的锁') && read('texts.js').includes('压着塔灵的气') &&
+  read('texts.js').includes('符文一灭') && read('texts.js').includes('摊子后头') &&
+  read('texts.js').includes('按你【当下的身子】灌顶'))
+ok('texts.js：17F / 核心 / 帮助文案无「13F 核心」与「硬门槛」旧口径',
+  read('texts.js').includes('"17F · 摊子后头的光"') &&
+  read('texts.js').includes('"17F · 能量核心"') &&
+  !read('texts.js').includes('没回去强化就一定卡在 17F'))
+ok('build_tables.py HEADER 有 v0.18 口径与 schema 9',
+  read('tools/build_tables.py').includes('v0.18 任务顺序重排') &&
+  read('tools/build_tables.py').includes('能量核心(17F 商人房'))
+ok('browser_check.mjs 有 v0.18 任务链端到端专项',
+  browserCheck.includes('v0.18 任务链'))
+
+// ---- v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化：静态防漂移 ----
+ok('make_levels.py 有 v0.19 吸血怪常量（字符 9 / 15% / eliteBefore 11 / shift 9）',
+  genPy.includes("DRAIN_CH = '9'") && genPy.includes('DRAIN_RATIO = 0.15') &&
+  genPy.includes('DRAIN_ELITE_BEFORE = 11') && genPy.includes('DRAIN_ELITE_SHIFT = 9'))
+ok('make_levels.py m10 噬血蝠带 drain / eliteBefore / eliteShift（k×r<1 硬约束，defW 恒 1.0）',
+  genPy.includes("'id': 'm10'") && genPy.includes("'drain': DRAIN_RATIO") &&
+  genPy.includes("'eliteBefore': DRAIN_ELITE_BEFORE") &&
+  genPy.includes("'eliteShift': DRAIN_ELITE_SHIFT") && genPy.includes("'defW': 1.0"))
+ok('make_levels.py 精英吸血怪投放做 BFS 非割点校验，且 9 纳入 cut_by_floor 双保险',
+  genPy.includes('_reach(g, (1, 1), (11, 13), {c})') &&
+  genPy.includes("'1245678' + DRAIN_CH"))
+ok('make_levels.py 血瓶 ×2 HP 供给校准（100 / 400）',
+  genPy.includes("'hp': 100") && genPy.includes("'hp': 400"))
+ok('make_levels.py tileChar / tileColor 补 9（血 / #c2185b）',
+  genPy.includes("'9': '血'") && genPy.includes("'9': '#c2185b'"))
+ok('logic.js calcBattle 把吸血作为独立项并入 hpCost（普伤为 0 也扣、不回怪血）',
+  logicSrc.includes('drainPerHit') && logicSrc.includes('hits * (monPerHit + drainPerHit)') &&
+  !logicSrc.includes('drain 回怪血'))
+ok('logic.js scaledMon 支持 eliteBefore 动态前期精英化（12F 起回落普通）',
+  logicSrc.includes('mon.eliteBefore') && logicSrc.includes('dynElite'))
+ok('app.js 战斗预览标「（吸血）」、texts.js 有 m10 图鉴与帮助文案',
+  app.includes('（吸血）') && read('texts.js').includes('m10:') &&
+  read('texts.js').includes('噬血蝠') && read('texts.js').includes('先把它打掉再回头捡血瓶') &&
+  read('texts.js').includes('堆防挡不住'))
+ok('gen_assets.py 有 drain 精灵帧与 9 → drain 映射',
+  read('tools/gen_assets.py').includes('draw_drain') &&
+  read('tools/gen_assets.py').includes("'9': 'drain'"))
+ok('build_tables.py HEADER 有 v0.19 口径（drain=15% / schema 10）',
+  read('tools/build_tables.py').includes('v0.19') &&
+  read('tools/build_tables.py').includes('drain=15%'))
+ok('browser_check.mjs 有 v0.19 吸血怪端到端专项',
+  browserCheck.includes('v0.19 吸血怪'))
+
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')
