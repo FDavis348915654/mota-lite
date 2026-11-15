@@ -29,6 +29,10 @@ const read = f => readFileSync(path.join(root, f), 'utf8')
 // v0.21.0：DEF_GAIN=1.2 死局旋钮已移除（用户授权「移除死局配置并调校」），
 // CONFIG 保持运行时真值。既有结构断言 / 通关路线逐步重放 / 存档往返全部直接
 // 跑在正式数值上，不再需要 v0.20.1 的「基线隔离」——findSolution() 已恢复通关。
+//
+// v0.22.0 门控基线隔离：v0.18 护盾 boost 语义断言用 big() 这类 def=99999 的极端
+// hero 会触发「逐层净伤门控」，干扰被测的 boost 本身。这些纯语义断言临时关掉
+// 门控单独验证；门控自身的效果由末尾 v0.22.0 专项段在正式数值上验证。
 
 let pass = 0, fail = 0
 function ok(name, cond, detail) {
@@ -36,6 +40,12 @@ function ok(name, cond, detail) {
   else { console.error('  ✗ ' + name + (detail ? '  -> ' + detail : '')); fail++ }
 }
 function eq(a, b, name) { ok(name, a === b, a === b ? String(a) : 'got ' + JSON.stringify(a) + ' want ' + JSON.stringify(b)) }
+// v0.22.0：只切门控开关，用于隔离纯 boost 语义断言（见文件头说明）。
+function withPressureOff(fn) {
+  const save = CONFIG.PRESSURE_ON
+  CONFIG.PRESSURE_ON = false
+  try { return fn() } finally { CONFIG.PRESSURE_ON = save }
+}
 
 console.log('=== 1. 配置表合法性 ===')
 const KNOWN = new Set([
@@ -1035,18 +1045,20 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
     deserialize('4|0,1,1,200,10,10,0,0,0,0,0,0,0,0,0,512||0') === null)
   const m1 = MONSTERS.find(m => m.ch === '1')
   const big = (flags) => ({ hp: 999999, atk: 99999, def: 99999, flags })
+  // v0.22.0：big() 的 def=99999 会触发逐层净伤门控，这里只验证 v0.18 护盾 boost
+  // 语义，故临时关掉门控（门控自身效果由末尾 v0.22.0 专项段验证）。
   ok('软门槛：未强化 15F 常规怪能打赢（不再判 shield）',
-    calcBattle(big(0), m1, B.floor).ok &&
-    calcBattle(big(0), m1, B.floor).reason !== 'shield')
+    withPressureOff(() => calcBattle(big(0), m1, B.floor).ok &&
+      calcBattle(big(0), m1, B.floor).reason !== 'shield'))
   ok('14F（台阶前）不叠加 boost（传 hero 与基线数值相同）',
-    scaledMon(m1, B.floor - 1, big(0)).hp === scaledMon(m1, B.floor - 1).hp)
+    withPressureOff(() => scaledMon(m1, B.floor - 1, big(0)).hp === scaledMon(m1, B.floor - 1).hp))
   ok('15F 未强化常规怪 HP/ATK 高于基线、怪防恒定（不抬防避免 21 层死局）',
-    (() => { const a = scaledMon(m1, B.floor, big(0)), b = scaledMon(m1, B.floor)
-      return a.hp > b.hp && a.atk > b.atk && a.def === b.def })())
+    withPressureOff(() => { const a = scaledMon(m1, B.floor, big(0)), b = scaledMon(m1, B.floor)
+      return a.hp > b.hp && a.atk > b.atk && a.def === b.def }))
   ok('灌顶后护盾散去、怪回到基线（HP/ATK 低于未强化）',
-    (() => { const a = scaledMon(m1, B.floor, big(FLAG.FAY_CHARGED))
+    withPressureOff(() => { const a = scaledMon(m1, B.floor, big(FLAG.FAY_CHARGED))
              const b = scaledMon(m1, B.floor, big(0))
-             return a.hp === scaledMon(m1, B.floor).hp && b.hp > a.hp && b.atk > a.atk })())
+             return a.hp === scaledMon(m1, B.floor).hp && b.hp > a.hp && b.atk > a.atk }))
   const elite = MONSTERS.find(m => m.ch === 'X')
   ok('elite 不叠加 boost（保持 v0.14 语义）',
     scaledMon(elite, B.floor, big(0)).hp === scaledMon(elite, B.floor).hp &&
@@ -1131,8 +1143,8 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
     FLOOR_SCALE[20].def === Math.round(0.65 * 223) &&
     FLOOR_SCALE.slice(16, 21).every(s => s.def < 160))
   const total17 = Object.values(dmg17).reduce((a, b) => a + b, 0)
-  ok('v0.19：早强化路径总损血 14000~15500（常规怪 +15% / 守门怪 hp×1.5 / 吸血 15% 三重叠加）',
-    total17 > 14000 && total17 < 15500, String(total17))
+  ok('v0.19→v0.22：早强化路径总损血 14000~17500（常规怪增益 / 守门怪 hp×1.5 / 吸血 15% 三重叠加，v0.22 净伤门控再抬前期）',
+    total17 > 14000 && total17 < 17500, String(total17))
   ok('无单层掉血尖峰（最高层损血 < 总损血 / 4）',
     Math.max(...Object.values(dmg17)) < total17 / 4,
     '最高 ' + Math.max(...Object.values(dmg17)))
@@ -1339,28 +1351,29 @@ const logicV21 = read('logic.js'), appV21 = read('app.js'), textsV21 = read('tex
 // ① 配置与源码防漂移
 ok('DEF_GAIN=1.2 死局旋钮已移除（源码无该配置项、无 CONFIG.DEF_GAIN 引用）',
   !/DEF_GAIN:\s*1\.2/.test(logicV21) && !logicV21.includes('CONFIG.DEF_GAIN'))
-ok('CONFIG 常规小怪增益 = 1.2 / 1.5 / 1.15，分段 HP 0.6 / 0.3',
-  CONFIG.MOB_ATK_GAIN === 1.2 && CONFIG.MOB_DEF_GAIN === 1.5 &&
+ok('CONFIG 常规小怪增益 = 1.3 / 1.5 / 1.15，分段 HP 0.6 / 0.25（v0.22.0 攻击 20%→30%）',
+  CONFIG.MOB_ATK_GAIN === 1.3 && CONFIG.MOB_DEF_GAIN === 1.5 &&
   CONFIG.MOB_DEF_CAP_MULT === 1.15 &&
-  CONFIG.MOB_HP_SCALE_FRONT === 0.6 && CONFIG.MOB_HP_SCALE_BACK === 0.3)
+  CONFIG.MOB_HP_SCALE_FRONT === 0.6 && CONFIG.MOB_HP_SCALE_BACK === 0.25)
 ok('scaledMon 只对常规小怪增益：魔王 noScale 提前返回、精英/守门/吸血蝠排除',
   logicV21.includes('if (mon.noScale) return mon') &&
   logicV21.includes('const isCommon = !isElite && defW < 1.2 && !mon.drain') &&
   logicV21.includes('MOB_DEF_CAP_MULT') && logicV21.includes('hpScale'))
 
-// 「临时关掉增益」拿到 v0.20.0 基线数值，用来对比增益生效面
-const GAIN_KEYS = ['MOB_ATK_GAIN', 'MOB_DEF_GAIN', 'MOB_DEF_CAP_MULT', 'MOB_HP_SCALE_FRONT', 'MOB_HP_SCALE_BACK']
+// 「临时切配置」拿 v0.20.0 静态基线（增益关 + 门控关）与 v0.22 正式数值做对比。
+// v0.22.0 把 PRESSURE_ON 纳入切换键：blockRate 需要显式对比「无门控静态基线」与「门控生效」。
+const GAIN_KEYS = ['MOB_ATK_GAIN', 'MOB_DEF_GAIN', 'MOB_DEF_CAP_MULT', 'MOB_HP_SCALE_FRONT', 'MOB_HP_SCALE_BACK', 'PRESSURE_ON']
 function withGain(spec, fn) {
   const save = GAIN_KEYS.map(k => CONFIG[k])
   GAIN_KEYS.forEach(k => { CONFIG[k] = spec[k] })
-  const out = fn()
-  GAIN_KEYS.forEach((k, i) => { CONFIG[k] = save[i] })
+  let out
+  try { out = fn() } finally { GAIN_KEYS.forEach((k, i) => { CONFIG[k] = save[i] }) }
   return out
 }
 const BASE_CFG = { MOB_ATK_GAIN: 1, MOB_DEF_GAIN: 1, MOB_DEF_CAP_MULT: 99,
-                   MOB_HP_SCALE_FRONT: 1, MOB_HP_SCALE_BACK: 1 }
-const NOW_CFG = { MOB_ATK_GAIN: 1.2, MOB_DEF_GAIN: 1.5, MOB_DEF_CAP_MULT: 1.15,
-                  MOB_HP_SCALE_FRONT: 0.6, MOB_HP_SCALE_BACK: 0.3 }
+                   MOB_HP_SCALE_FRONT: 1, MOB_HP_SCALE_BACK: 1, PRESSURE_ON: false }
+const NOW_CFG = { MOB_ATK_GAIN: 1.3, MOB_DEF_GAIN: 1.5, MOB_DEF_CAP_MULT: 1.15,
+                  MOB_HP_SCALE_FRONT: 0.6, MOB_HP_SCALE_BACK: 0.25, PRESSURE_ON: true }
 
 const slime21 = monsterByCh('1'), stoneV21 = monsterByCh('6')
 const bossV21 = MONSTERS.find(m => m.noScale), eliteV21 = monsterByCh('X'), drainV21 = monsterByCh('9')
@@ -1369,14 +1382,14 @@ for (let f = 0; f < 21; f++) {
   const b = withGain(BASE_CFG, () => scaledMon(slime21, f, null))
   const n = withGain(NOW_CFG, () => scaledMon(slime21, f, null))
   const cap = Math.round(FLOOR_SCALE[f].def * CONFIG.MOB_DEF_CAP_MULT)
-  if (!(n.atk >= Math.round(b.atk * 1.2) - 1 && n.atk <= Math.round(b.atk * 1.2) + 1)) gainAtkOK = false
+  if (!(n.atk >= Math.round(b.atk * 1.3) - 1 && n.atk <= Math.round(b.atk * 1.3) + 1)) gainAtkOK = false
   if (!(n.def <= cap + 1 && n.def >= b.def)) gainDefOK = false
   const hs = f < 11 ? CONFIG.MOB_HP_SCALE_FRONT : CONFIG.MOB_HP_SCALE_BACK
   if (!(n.hp >= Math.round(b.hp * hs) - 1 && n.hp <= Math.round(b.hp * hs) + 1)) gainHpOK = false
 }
-ok('21 层常规小怪 ATK 精确 ×1.2（±1 取整）', gainAtkOK)
+ok('21 层常规小怪 ATK 精确 ×1.3（±1 取整，v0.22.0 攻击 +30%）', gainAtkOK)
 ok('21 层常规小怪 DEF 被 CAP 钳到 s.def×1.15 且不高于增益值', gainDefOK)
-ok('21 层常规小怪 HP 按前/后段 0.6 / 0.3 缩放（±1 取整）', gainHpOK)
+ok('21 层常规小怪 HP 按前/后段 0.6 / 0.25 缩放（±1 取整）', gainHpOK)
 
 // ② 不增益面：魔王 / 精英 / 守门 / 吸血蝠保持 v0.20.0 基线
 for (const [label, mon] of [['魔王 noScale', bossV21], ['精英 X', eliteV21],
@@ -1436,7 +1449,8 @@ ok('花光资源 build（金币全部买防）仍能通关 21F',
 ok('花光资源确实堆到极高防（DEF > 1000），不是「没花完」的假验证',
   rich21.hero.def > 1000, String(rich21.hero.def))
 
-// ④ 花光资源防杀率：新版应低于基线（用户「花光资源后很容易打怪」）
+// ④ 花光资源防杀率：v0.22.0 门控（NOW_CFG=门控开）应彻底清零无门控静态基线（BASE_CFG=门控关）
+//    的防杀（用户「花光资源后很容易打怪」「4F~8F 打小怪都是防杀」）
 const PD21 = [20, 26, 49, 49, 62, 88, 104, 104, 125, 141, 144]
 const MOB_CH21 = ['1', '2', '4', '7', '5', '8']
 function blockRate21(defMul, spec) {
@@ -1455,9 +1469,11 @@ function blockRate21(defMul, spec) {
   })
 }
 const brBase21 = blockRate21(1.5, BASE_CFG), brNew21 = blockRate21(1.5, NOW_CFG)
-ok('花光堆防 DEF×1.5 防杀率下降（新版 < 基线）', brNew21 < brBase21,
+ok('v0.22.0 门控把花光堆防 DEF×1.5 防杀率打到底（新版 0% < 无门控静态基线）', brNew21 === 0 && brNew21 < brBase21,
   brBase21.toFixed(1) + '% → ' + brNew21.toFixed(1) + '%')
-ok('花光堆防 DEF×1.5 新版防杀率不超过 45%', brNew21 <= 45, brNew21.toFixed(1) + '%')
+ok('v0.22.0 门控对极端堆防 DEF×3 / ×5 同样零防杀（静态基线上限 66.7% 被根治）',
+  blockRate21(3, NOW_CFG) === 0 && blockRate21(5, NOW_CFG) === 0)
+ok('v0.22.0 花光堆防 DEF×1.5 新版防杀率不超过 5%', brNew21 <= 5, brNew21.toFixed(1) + '%')
 
 // ⑤ 吸血蝠前期削弱（用户「吸血怪前期削弱一点」= 降前期精英层数）
 ok('吸血蝠 eliteShift = 7（v0.21.0 从 9 降到 7）', drainV21.eliteShift === 7)
@@ -1506,5 +1522,44 @@ ok('app.js 动画结束回调立即 pumpInputQueue（不再等手动重点一次
 ok('app.js 重开 / 读档 / 回放 / 确认弹窗统一清空队列',
   (appV21.match(/clearInputQueue\(\)/g) || []).length >= 6)
 
+
+// ==== v0.22.0 专项：确定性动态数值 / 逐层净伤门控边界（回归） ====
+console.log('\n=== v0.22.0 确定性动态数值 / 逐层净伤门控 ===')
+{
+  const rich = { atk: 112, def: 9999, hp: 200000, keys: { y: 0, b: 0, r: 0 }, flags: 0 }
+  const slate = monsterByCh('1')
+  const specials = ['5', '8', '6', '9', 'X', '3'].map(ch => {
+    const m = monsterByCh(ch)
+    const a = withPressureOff(() => scaledMon(m, 7, rich))
+    const b = scaledMon(m, 7, rich)
+    return a.atk === b.atk && a.hp === b.hp && a.def === b.def
+  })
+  ok('v0.22.0 门控不误伤 pierce 法师系 / 守门石头人 / 吸血蝠 / 精英 / 魔王',
+    specials.every(Boolean), JSON.stringify(specials))
+  const base = withPressureOff(() => scaledMon(slate, 7, rich))
+  const gated = scaledMon(slate, 7, rich)
+  const net7 = Math.round(CONFIG.PRESSURE_NET_BASE + 7 * CONFIG.PRESSURE_NET_STEP)
+  ok('v0.22.0 门控把常规小怪 ATK 抬到 DEF+net(层) 且只抬不降',
+    gated.atk === rich.def + net7 && gated.atk > base.atk, net7 + ' / ' + gated.atk)
+  ok('v0.22.0 门控锁 PRESSURE_ROUNDS 回合（HP=(R-1)·perHit+1）',
+    gated.hp === (CONFIG.PRESSURE_ROUNDS - 1) * Math.max(1, rich.atk - gated.def) + 1)
+  const nullV = scaledMon(slate, 7, null)
+  const staticBase = withPressureOff(() => scaledMon(slate, 7, rich))
+  ok('v0.22.0 hero=null 不介入，静态基线可精确复算',
+    nullV.atk === staticBase.atk && nullV.hp === staticBase.hp && nullV.def === staticBase.def)
+  const h = { atk: 112, def: 149, hp: 2000, flags: 0 }
+  const d1 = scaledMon(slate, 7, h), d2 = scaledMon(slate, 7, h)
+  ok('v0.22.0 确定性（纯函数）：同一 hero 两次调用数值完全一致',
+    d1.atk === d2.atk && d1.hp === d2.hp && d1.def === d2.def)
+  const modest = { atk: 21, def: 5, hp: 200000, keys: { y: 0, b: 0, r: 0 }, flags: 0 }
+  const m0 = scaledMon(slate, 0, modest), m0b = withPressureOff(() => scaledMon(slate, 0, modest))
+  ok('v0.22.0 不介入场次保留静态基线（建模路线不秒杀 / DEF 未超标，买防仍减净伤）',
+    m0.atk === m0b.atk && m0.hp === m0b.hp && m0.def === m0b.def)
+  const nets = []
+  for (let f = 0; f < CONFIG.PRESSURE_FLOOR_LIMIT; f++)
+    nets.push(Math.max(1, Math.round(CONFIG.PRESSURE_NET_BASE + f * CONFIG.PRESSURE_NET_STEP)))
+  ok('v0.22.0 net(层) 逐层线性递增（每过一层怪物更难打）',
+    nets.every((v, i) => i === 0 || v >= nets[i - 1]), nets.join(','))
+}
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

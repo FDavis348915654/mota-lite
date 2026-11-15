@@ -1438,9 +1438,14 @@ try {
     const big=(flags)=>({hp:999999,atk:99999,def:99999,flags});
     const uncharged=l.calcBattle(big(0),m1,t.BARRIER.floor);
     const charged=l.calcBattle(big(l.FLAG.FAY_CHARGED),m1,t.BARRIER.floor);
+    // v0.22.0 门控基线隔离：big() 的 def=99999 会触发「逐层净伤门控」，干扰下面几条
+    // 纯 v0.18 护盾 boost 语义比较。临时关掉门控单独验证 boost 本身；门控自身效果由
+    // 末尾 v0.22.0 门控端到端专项在正式数值上验证（与 validate_logic.mjs 的 withPressureOff 同口径）。
+    const C=l.CONFIG, pSave=C.PRESSURE_ON; C.PRESSURE_ON=false;
     const base=l.scaledMon(m1,t.BARRIER.floor);
     const shieldM=l.scaledMon(m1,t.BARRIER.floor,big(0));
     const pre=l.scaledMon(m1,t.BARRIER.floor-1,big(0)), preBase=l.scaledMon(m1,t.BARRIER.floor-1);
+    C.PRESSURE_ON=pSave;
     const sol=sv.findSolution();
     let s=l.newGame(); const seq=[s.floor];
     if(sol) for(const d of sol.steps){const bf=s.floor; s=l.resolveStep(s,d).state; if(s.floor!==bf) seq.push(s.floor)};
@@ -1712,8 +1717,8 @@ try {
   check('v0.18 回放：findSolution 通关（3385 步 / 600 轮量级、路线不退化）',
     V17.solOK && V17.steps>3000 && V17.steps<4000 && V17.rounds>500 && V17.rounds<700,
     V17.steps + ' 步 / ' + V17.rounds + ' 轮')
-  check('v0.19：早强化路径总损血 14000~15500 且无单层尖峰（三重叠加难度）',
-    V17.totalDmg>14000 && V17.totalDmg<15500 && V17.maxDmg<V17.totalDmg/4,
+  check('v0.19→v0.22：早强化路径总损血 14000~17500 且无单层尖峰（三重叠加 + 净伤门控再抬前期）',
+    V17.totalDmg>14000 && V17.totalDmg<17500 && V17.maxDmg<V17.totalDmg/4,
     '总损血=' + V17.totalDmg + ' 最高单层=' + V17.maxDmg + ' 终局HP=' + V17.endHP)
   check('v0.18 强敌：3F/9F/14F 首次打不过、4 处终局回头全可打（18F 因灌顶提前首次可打）', V17.eliteOK)
   check('v0.18 回归：软门槛（未强化也能打赢）、魔王战仍非零伤',
@@ -1728,7 +1733,7 @@ try {
     /软门槛/.test(helpRule17) && /各 \+40%/.test(helpRule17),
     'len=' + (helpRule17 ? helpRule17.length : 0))
   const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
-  check('v0.20 版本：标题徽章显示 v0.21.0', /v0\.21\.0/.test(titleV17), titleV17)
+  check('v0.20 版本：标题徽章显示 v0.22.1', /v0\.22\.1/.test(titleV17), titleV17)
 
   // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
   const P17 = await ev(`(async()=>{
@@ -1812,8 +1817,8 @@ try {
   check('v0.20 任务链：完全不强化 noCharge 不再保证通关（用户本次明确澄清）',
     !V18.none || !V18.none.ok)
   check('v0.18 任务链：任务格 13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e', V18.taskGrid)
-  check('v0.20 任务链：版本 v0.21.0 / meta.schema=11',
-    V18.version==='v0.21.0' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
+  check('v0.20 任务链：版本 v0.22.1 / meta.schema=11',
+    V18.version==='v0.22.1' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
 
 
   // ---- v0.19 攻击吸血怪 / 前期精英化 / 后期普通怪 / 守门怪强化 专项端到端 ----
@@ -1852,7 +1857,7 @@ try {
       potion: ps.effect.hp===100 && pl.effect.hp===400,
       guard: t.MONSTERS.find(m=>m.ch==='6').hpW===1.5 && t.MONSTERS.find(m=>m.ch==='X').hpW===1.0,
       schema: cfg.meta.schema===11 && cfg.meta.curve.lossGain===1.5,
-      version: (await import('./version.js')).VERSION==='v0.21.0'
+      version: (await import('./version.js')).VERSION==='v0.22.1'
     };
   })()`)
   check('v0.19 吸血怪：普伤为 0 时仍按当前 HP 15% 吸血（hpCost = k×吸血）', V19.noBreak,
@@ -1866,7 +1871,7 @@ try {
   check('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）', V19.grid)
   check('v0.19 血瓶 ×2 HP 供给（100 / 400）', V19.potion)
   check('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0', V19.guard)
-  check('v0.20 版本 v0.21.0 / schema11 / lossGain1.5', V19.schema && V19.version)
+  check('v0.20 版本 v0.22.1 / schema11 / lossGain1.5', V19.schema && V19.version)
 
 
   // ---- v0.20 前期防杀抑制：端到端回放 + 帮助弹层口径 ----
@@ -1893,7 +1898,7 @@ try {
       atk11:[29,61,55,70,99,110,112,120,134,150,158].every((v,i)=>fs[i].atk===v),
       tail:fs.slice(11,21).every((v,i,a)=>i===0||v.atk>=a[i-1].atk),
       schema:(await (await fetch('./levels/levels.json')).json()).meta.schema===11,
-      version:(await import('./version.js')).VERSION==='v0.21.0'
+      version:(await import('./version.js')).VERSION==='v0.22.1'
     };
   })()`)
   check('v0.20 前期防杀消除：正式回放 1F~11F 常规怪零伤率 0%', V20.zero===0 && V20.n>0,
@@ -1902,7 +1907,7 @@ try {
     String(V20.earlyLoss))
   check('v0.20 默认回放仍通关且 3410 步', V20.win && V20.steps===3410)
   check('v0.20 前 11 组 ATK 定稿值 + 12F 起不回落', V20.atk11 && V20.tail)
-  check('v0.20 版本 v0.21.0 / meta.schema=11', V20.version && V20.schema)
+  check('v0.20 版本 v0.22.1 / meta.schema=11', V20.version && V20.schema)
   const helpRule20 = await ev("document.querySelector('#helpRule').textContent")
   check('v0.20 文案：帮助弹层渲染出防杀消除 / 合理利用金币经验',
     /防杀/.test(helpRule20) && /合理利用手上的金币与经验/.test(helpRule20),
@@ -1910,8 +1915,8 @@ try {
   check('v0.20 文案：帮助弹层不再宣称「不回去强化也能硬扛到塔顶」',
     !/不回去强化也能硬扛到塔顶/.test(helpRule20))
 
-  // ---- v0.21.0 数值 / 剧情口径：真实浏览器里 import 真模块现算 ----
-  const V21 = await ev(`(async()=>{
+  // ---- v0.22.0 数值 / 剧情口径：真实浏览器里 import 真模块现算 ----
+  const V22 = await ev(`(async()=>{
     const l=await import('./logic.js'), t=await import('./tables.js'), sv=await import('./solver.js'), T=await import('./texts.js');
     const C=l.CONFIG, keys=['MOB_ATK_GAIN','MOB_DEF_GAIN','MOB_DEF_CAP_MULT','MOB_HP_SCALE_FRONT','MOB_HP_SCALE_BACK'];
     const save=keys.map(k=>C[k]);
@@ -1929,9 +1934,11 @@ try {
     }
     const s=T.TEXTS.story, i=T.TEXTS.itemDesc;
     return {
-      cfg:C.MOB_ATK_GAIN===1.2&&C.MOB_DEF_GAIN===1.5&&C.MOB_DEF_CAP_MULT===1.15&&
-          C.MOB_HP_SCALE_FRONT===0.6&&C.MOB_HP_SCALE_BACK===0.3&&!('DEF_GAIN' in C),
-      atkGain:n.atk>=Math.round(b.atk*1.2)-1&&n.atk<=Math.round(b.atk*1.2)+1,
+      cfg:C.MOB_ATK_GAIN===1.3&&C.MOB_DEF_GAIN===1.5&&C.MOB_DEF_CAP_MULT===1.15&&
+          C.MOB_HP_SCALE_FRONT===0.6&&C.MOB_HP_SCALE_BACK===0.25&&
+          C.PRESSURE_ON===true&&C.PRESSURE_NET_BASE===5&&C.PRESSURE_NET_STEP===1.5&&
+          C.PRESSURE_ROUNDS===2&&C.PRESSURE_FLOOR_LIMIT===21&&!('DEF_GAIN' in C),
+      atkGain:n.atk>=Math.round(b.atk*1.3)-1&&n.atk<=Math.round(b.atk*1.3)+1,
       defCap:n.def<=Math.round(t.FLOOR_SCALE[0].def*1.15)+1&&n.def>=b.def,
       hpScale:n.hp>=Math.round(b.hp*0.6)-1&&n.hp<=Math.round(b.hp*0.6)+1,
       bossIntact:!!boss&&l.scaledMon(boss,0,null).atk===boss.atk,
@@ -1943,18 +1950,21 @@ try {
             /怪物把我看在这儿太久/.test(s.elder.body)&&
             /这一路救出来的，不止是公主/.test(s.win.body)&&
             /被怪物囚禁/.test(i.npc_mage)&&/被怪物囚禁/.test(i.npc_thief)&&/被怪物囚禁/.test(i.npc_elder),
-      version:(await import('./version.js')).VERSION==='v0.21.0'
+      help:/攻击抬高到 30%/.test(T.TEXTS.help.rule)&&/逐层施压/.test(T.TEXTS.help.rule)&&
+           !/攻击抬高 20%/.test(T.TEXTS.help.rule),
+      version:(await import('./version.js')).VERSION==='v0.22.1'
     };
   })()`)
-  check('v0.21.0 数值：CONFIG 增益 1.2/1.5/1.15 + 分段 HP 0.6/0.3，DEF_GAIN 已移除', V21.cfg)
-  check('v0.21.0 数值：1F 常规小怪 ATK×1.2 / DEF 被 CAP 钳住 / HP 前段×0.6',
-    V21.atkGain && V21.defCap && V21.hpScale)
-  check('v0.21.0 数值：魔王 noScale 不吃增益 / 吸血蝠 eliteShift=7', V21.bossIntact && V21.shift7)
-  check('v0.21.0 数值：真实浏览器 findSolution 恢复通关（3410 步）', V21.solWin)
-  check('v0.21.0 数值：花光资源 build（金币全买防）仍通关且 DEF>1000', V21.richWin,
-    '买防 ' + V21.buys + ' 次')
-  check('v0.21.0 剧情：法师 / 盗贼 / 老者 / 结局 / 图例统一「被怪物囚禁 · 顺路救出」', V21.story)
-  check('v0.21.0 版本 v0.21.0', V21.version)
+  check('v0.22.0 数值：CONFIG 增益 1.3/1.5/1.15 + 分段 HP 0.6/0.25 + PRESSURE_* 门控全量就位', V22.cfg)
+  check('v0.22.0 数值：1F 常规小怪 ATK×1.3 / DEF 被 CAP 钳住 / HP 前段×0.6',
+    V22.atkGain && V22.defCap && V22.hpScale)
+  check('v0.22.0 数值：魔王 noScale 不吃增益 / 吸血蝠 eliteShift=7', V22.bossIntact && V22.shift7)
+  check('v0.22.0 数值：真实浏览器 findSolution 仍 3410 步通关（门控不打挂 solver）', V22.solWin)
+  check('v0.22.0 数值：花光资源 build（金币全买防）仍通关且 DEF>1000', V22.richWin,
+    '买防 ' + V22.buys + ' 次')
+  check('v0.22.0 剧情：法师 / 盗贼 / 老者 / 结局 / 图例统一「被怪物囚禁 · 顺路救出」', V22.story)
+  check('v0.22.0 文案：帮助弹层改为 +30% / 逐层施压，不再写 +20%', V22.help)
+  check('v0.22.1 版本 v0.22.1', V22.version)
 
   // ---- v0.21.0 操作手感：战斗动画期间点击排队，动画结束立即继续移动 ----
   const FEEL = await ev(`(async()=>{
@@ -2002,6 +2012,60 @@ try {
       posAfter.includes('(' + FEEL.tx + ',' + FEEL.ty + ')'), posAfter)
   }
 
+
+  // ---- v0.22.0 确定性动态数值 / 逐层净伤门控：真实浏览器端到端 ----
+  const GATE22 = await ev(`(async()=>{
+    const l=await import('./logic.js'), t=await import('./tables.js');
+    const C=l.CONFIG, CH=['1','2','4','7','5','8'];
+    const rich={atk:112,def:9999,hp:200000,keys:{y:0,b:0,r:0},flags:0};
+    const PD=[20,26,49,49,62,88,104,104,125,141,144];
+    function rate(mul,on){const sv=C.PRESSURE_ON;C.PRESSURE_ON=on;
+      let block=0,total=0;
+      for(let f=0;f<11;f++){
+        const h={atk:Math.round(PD[f]*1.05),def:Math.round(PD[f]*mul),hp:100000,keys:{y:0,b:0,r:0},flags:0};
+        for(const ch of CH){const r=l.calcBattle(h,t.monsterByCh(ch),f);total++;if(r.ok&&r.monPerHit===0)block++}
+      }
+      C.PRESSURE_ON=sv;return 100*block/total}
+    const specials=['5','8','6','9','X','3'].map(ch=>{
+      const m=t.monsterByCh(ch);
+      C.PRESSURE_ON=false;const b=l.scaledMon(m,7,rich);
+      C.PRESSURE_ON=true;const n=l.scaledMon(m,7,rich);
+      return b.atk===n.atk&&b.hp===n.hp&&b.def===n.def});
+    C.PRESSURE_ON=false;const cb=l.scaledMon(t.monsterByCh('1'),7,rich);
+    C.PRESSURE_ON=true;const cn=l.scaledMon(t.monsterByCh('1'),7,rich);
+    const net7=Math.round(C.PRESSURE_NET_BASE+7*C.PRESSURE_NET_STEP);
+    const nullV=l.scaledMon(t.monsterByCh('1'),7,null);
+    const h={atk:112,def:149,hp:2000,flags:0};
+    const d1=l.scaledMon(t.monsterByCh('1'),7,h), d2=l.scaledMon(t.monsterByCh('1'),7,h);
+    const modest={atk:21,def:5,hp:200000,keys:{y:0,b:0,r:0},flags:0};
+    const m0=l.scaledMon(t.monsterByCh('1'),0,modest);
+    const m0base=(()=>{const sv=C.PRESSURE_ON;C.PRESSURE_ON=false;const v=l.scaledMon(t.monsterByCh('1'),0,modest);C.PRESSURE_ON=sv;return v})();
+    const nets=[];for(let f=0;f<C.PRESSURE_FLOOR_LIMIT;f++)nets.push(Math.max(1,Math.round(C.PRESSURE_NET_BASE+f*C.PRESSURE_NET_STEP)));
+    return {
+      off:[rate(1.5,false),rate(3,false),rate(5,false)],
+      on:[rate(1.5,true),rate(3,true),rate(5,true)],
+      specials, commonChanged:cn.atk!==cb.atk||cn.hp!==cb.hp,
+      commonAtkOK:cn.atk===rich.def+net7, net7,
+      roundsOK:cn.hp===(C.PRESSURE_ROUNDS-1)*Math.max(1,rich.atk-cn.def)+1,
+      nullIntact:nullV.atk===cb.atk&&nullV.hp===cb.hp&&nullV.def===cb.def,
+      deterministic:d1.atk===d2.atk&&d1.hp===d2.hp&&d1.def===d2.def,
+      modestIntact:m0.atk===m0base.atk&&m0.hp===m0base.hp&&m0.def===m0base.def,
+      netIncreasing:nets.every((v,i)=>i===0||v>=nets[i-1])
+    };
+  })()`)
+  check('v0.22.0 门控：静态基线防杀率 DEF×1.5/×3/×5 分别为 33%/62%/67%',
+    GATE22.off[0]>25 && GATE22.off[1]>55 && GATE22.off[2]>60, GATE22.off.map(v=>v.toFixed(1)+'%').join(' / '))
+  check('v0.22.0 门控：三档极端堆防防杀率全部归零', GATE22.on.every(v=>v===0),
+    GATE22.on.map(v=>v.toFixed(1)+'%').join(' / '))
+  check('v0.22.0 门控：pierce 法师系 / 守门石头人 / 吸血蝠 / 精英 / 魔王全部不被介入',
+    GATE22.specials.every(Boolean), JSON.stringify(GATE22.specials))
+  check('v0.22.0 门控：常规小怪会防杀时介入并把 ATK 抬到 DEF+net（只抬不降）',
+    GATE22.commonChanged && GATE22.commonAtkOK, 'net7=' + GATE22.net7)
+  check('v0.22.0 门控：介入场次锁 PRESSURE_ROUNDS 回合（HP=(R-1)·perHit+1）', GATE22.roundsOK)
+  check('v0.22.0 门控：hero=null 不介入，静态基线可精确复算', GATE22.nullIntact)
+  check('v0.22.0 门控：确定性——同一 hero 两次调用数值完全一致', GATE22.deterministic)
+  check('v0.22.0 门控：不介入场次保留静态基线（买防仍能减净伤）', GATE22.modestIntact)
+  check('v0.22.0 门控：net(f) 逐层线性递增（每过一层更难打）', GATE22.netIncreasing)
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {
   check('脚本执行未抛错', false, e.message)

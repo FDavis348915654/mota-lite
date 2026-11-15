@@ -44,6 +44,13 @@ import {
 // 经典魔塔是「固定数值、可预计算」：同一只怪在不同层数值不同，玩家可据图鉴精确算损血。
 // 这修掉 v0.8 的根因：怪 ATK 全局常量、玩家 DEF 单调涨到 240，导致 100% 零伤。
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
+//
+// v0.22.0：常规小怪增补「确定性动态数值」——scaledMon 本就接收 hero（v0.18 护盾起），
+// 现在「会防杀 / 会一击必杀零损血」时按玩家当前 DEF 把该怪重定为高攻短回合（见下方门控）。
+// 数值仍是纯函数 (mon, floor, hero) -> 定值，无随机、无外部状态：图鉴 / 战斗预览 /
+// solver.findSolution / resolveStep 结算全部同源，玩家仍可据图鉴精确预计算本场损血。
+// 变化的是「同一只怪在不同 DEF 下数值不同」：从固定数值扩展为确定性动态数值，
+// 用来根治静态模型无法回避的堆防防杀（详见 CONFIG.PRESSURE_* 与 CHANGELOG）。
 export function scaledMon(mon, floor, hero) {
   if (!mon) return mon
   // v0.21.0：魔王 noScale 保持自身终局数值（走到即通关、不参与战斗结算），不参与小怪增益。
@@ -91,10 +98,32 @@ export function scaledMon(mon, floor, hero) {
     // 按楼层分前/后段缩放 hp 把单场总损血拉回基线（生成链 hp=(R-1)·perHit+1 的同一建模）。
     hpScale = fl < 11 ? (CONFIG.MOB_HP_SCALE_FRONT || 1) : (CONFIG.MOB_HP_SCALE_BACK || 1)
   }
+  let hp = Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp * hpScale))
+  // v0.22.0 逐层净伤门控：只在「这一场确实会防杀 / 会一击必杀零损血」时介入。
+  // 固定数值模型下怪 ATK 是楼层表静态值，玩家 DEF 却能靠金币经验持续堆高，
+  // 一旦 DEF ≥ 怪 ATK 就 monPerHit=0（防杀），再高的怪防 / 怪 HP / 回合数都不起作用
+  // （反击次数再多也是 0 伤害）——纯静态加百分比永远追不上堆防，无法根治。
+  // 故把这只常规小怪重定为「高攻、短回合」：ATK 抬到 玩家DEF + 逐层净伤 net(层)，
+  // HP 锁成 (R-1)·perHit+1 令 rounds 恒 = R、hits 恒 = R-1，每场稳定掉 (R-1)·net 血。
+  //   · 不介入的场次（前期 DEF 还没超标）保留静态基线，适度买防仍能减净伤 -> 买防有用；
+  //   · 介入后净伤 = net 随层数线性递增 -> 每过一层更难打、堆防不能无限躺赢；
+  //   · pierce 法师系无视玩家 DEF（monPerHit = 怪ATK 真实伤害），不适用基于 DEF 的门控，排除；
+  //   · 精英 / 守门石头人 / 吸血蝠 / 魔王本来就不吃常规小怪增益（isCommon 已排除），不动。
+  // hero 为 null 时（校验 / 图鉴基线查询）不介入，FLOOR_SCALE 基线仍可精确复算。
+  if (isCommon && !mon.pierce && hero && CONFIG.PRESSURE_ON && fl < CONFIG.PRESSURE_FLOOR_LIMIT) {
+    const perHit = Math.max(1, hero.atk - def)
+    const wouldBlock = hero.def >= atk          // 这一场会防杀
+    const oneShot = hp <= perHit                // 这一场会一击必杀（hits=0）零损血
+    if (wouldBlock || oneShot) {
+      const net = Math.max(1, Math.round(CONFIG.PRESSURE_NET_BASE + fl * CONFIG.PRESSURE_NET_STEP))
+      atk = Math.max(atk, hero.def + net)       // 只抬不降，避免一击必杀场次把怪 ATK 反而拉低
+      hp = Math.max(1, (CONFIG.PRESSURE_ROUNDS - 1) * perHit + 1)
+    }
+  }
   return {
     ...mon,
     elite: isElite,
-    hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp * hpScale)),
+    hp,
     atk,
     def
   }
@@ -106,13 +135,16 @@ export const CONFIG = {
   MIN_DAMAGE_1: false,  // 经典 50 层：ATK<=DEF 判「不可破防」；部分版本强制 1 点伤害
   CELL: 28,             // 格子边长 px（7 列 * 28 = 196，212 宽左右各留 8）
   SAFE_LR: 8,           // 胶囊圆角左右安全区
-  // v0.21.0：常规小怪攻防增益（用户「花光资源堆防后仍能防杀很多小怪，与设计初衷不符」）。
-  //   · 移除 v0.20.1 的 DEF_GAIN=1.2（那是「不用考虑平衡」的死局旋钮，实测 findSolution=null）。
+  // v0.21.0 常规小怪攻防增益 / v0.22.0 上调攻击 + 新增逐层净伤门控。
+  //   · v0.20.1 的 DEF_GAIN=1.2 是「不用考虑平衡」的死局旋钮（findSolution=null），已移除。
   //   · MOB_ATK_GAIN / MOB_DEF_GAIN 只作用常规小怪，排除魔王 / 精英 / 守门石头人(见 scaledMon)。
+  //     v0.22.0 按用户「小怪攻击力提升30%」把 ATK 从 1.2 上调到 1.3（DEF 维持 1.5 = +50%）。
   //   · MOB_DEF_CAP_MULT：+50% 防御会让 defW≥1.03 的怪 perHit≤0（破不了防死局），
   //     故把增益后的 def 钳到「标准怪防 s.def × 该倍数」，保证建模路线 perHit>0、回合可控。
-  //     这是用户授权「移除死局配置并调校」里的破防保底，具体值由探针实测定标。
-  MOB_ATK_GAIN: 1.2,
+  //   · 用户反馈「金币经验对半加强攻防后 4F~8F 打小怪全是防杀、打精英又打不过」，
+  //     实测 +30% 静态攻击追不上堆防（DEF149/164 vs 怪ATK146/156），故 v0.22.0 新增
+  //     下方 PRESSURE_* 门控（见 scaledMon），把「固定数值」扩展为「确定性动态数值」。
+  MOB_ATK_GAIN: 1.3,
   MOB_DEF_GAIN: 1.5,
   // 破防保底 CAP 与分段损血守恒：由 CAP×HP 网格叠加 4 条强化时机路径实测定标。
   // CAP=1.15（CAP≥1.4 时任何 HP 缩放都死局）。只按单常数缩 HP 虽能保默认路线通关，
@@ -127,7 +159,22 @@ export const CONFIG = {
   // 后期(12F 起，尤其灌顶前后)余量薄，缩更多 HP 保住「延后到 19F/20F 才强化」的路径不被 lethal 切断。
   // 两个值由 CAP × HP 网格叠加 4 条强化时机路径实测定标（见 CHANGELOG）。
   MOB_HP_SCALE_FRONT: 0.6,
-  MOB_HP_SCALE_BACK: 0.3,
+  // v0.22.0：ATK 1.2→1.3 后后段净伤抬高、总损血上浮，HP 后段 0.3→0.25 把单场总损血拉回，
+  // 保住「延后到 19F / 20F 才强化」两条路径不被 lethal 切断（实测定标见 CHANGELOG）。
+  MOB_HP_SCALE_BACK: 0.25,
+  // ---- v0.22.0 逐层净伤门控（根治「堆防防杀」，用户「再调一版比 +30%/+50% 更激进」）----
+  // PRESSURE_ON：总开关（校验脚本可临时关掉拿 v0.21 静态基线做对比）。
+  // PRESSURE_NET_BASE / STEP：介入时把常规小怪净伤抬到 net(层) = BASE + 层索引 × STEP，
+  //   逐层线性递增 -> 「每过一层都感觉怪物更难打」。定标 5 + 1.5×层（21F 净伤约 35/下）：
+  //   更大(net≥6+2f)会把 d20 纯路线压到只剩 ~96HP 太贴 lethal，更小则体感不够激进。
+  // PRESSURE_ROUNDS：介入时把战斗锁成 R 回合（hits=R-1），令每场稳定掉 (R-1)×net 血，
+  //   同时避免「perHit 小 → rounds 暴涨 → 每回合固定净伤累积 lethal」把 findSolution 打挂。
+  // PRESSURE_FLOOR_LIMIT：门控作用的楼层上限，21 = 全程精英断层之外都覆盖。
+  PRESSURE_ON: true,
+  PRESSURE_NET_BASE: 5,
+  PRESSURE_NET_STEP: 1.5,
+  PRESSURE_ROUNDS: 2,
+  PRESSURE_FLOOR_LIMIT: 21,
   SAVE_LIMIT: 4096,     // v3：21 层 13×15 大地图通关存档实测 1025B，留 4 倍余量
   HANDHELD_SAVE_LIMIT: 128, // 手环端 @system.storage 的参考上限，仅用于 UI 提示；移植时须恢复（spec 附 D）
   SHOP_COST: 20,        // 商店一次交易花费金币（经典 21 层魔塔固定价）
