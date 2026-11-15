@@ -1664,8 +1664,8 @@ try {
   check('v0.19 高防：meta.curve 有 defRatio0.65 / battleRounds5 / lossGain1.5 / costMul5.0',
     V17.cfg.defRatio===0.65 && V17.cfg.battleRounds===5 &&
     V17.cfg.lossGain===1.5 && V17.cfg.costMul===5.0, JSON.stringify(V17.cfg))
-  check('v0.17 高防：标准怪防大幅抬高（1F>=13 / 21F>=140 / def·atk^-1 0.3~0.6）',
-    V17.def1>=13 && V17.def21>=140 && V17.ratioMin>=0.28 && V17.ratio21>=0.45,
+  check('v0.20 高防：怪防仍按 0.65×实测 ATK 建模（抬攻后 def·atk^-1 下限 0.24）',
+    V17.def1>=13 && V17.def21>=140 && V17.ratioMin>=0.24 && V17.ratio21>=0.45 && V17.defModelOK,
     '1F=' + V17.def1 + ' 21F=' + V17.def21 + ' min=' + V17.ratioMin.toFixed(2))
   check('v0.17 高防：1F~16F 怪防按每层首次战斗实测 ATK 的 0.65 建模', V17.defModelOK)
   check('v0.18：17F~21F 改按【未强化路径】基准建模（119 / 145）', V17.lateModelOK)
@@ -1713,7 +1713,7 @@ try {
     /软门槛/.test(helpRule17) && /各 \+40%/.test(helpRule17),
     'len=' + (helpRule17 ? helpRule17.length : 0))
   const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
-  check('v0.19 版本：标题徽章显示 v0.19.0', /v0\.19\.0/.test(titleV17), titleV17)
+  check('v0.20 版本：标题徽章显示 v0.20.0', /v0\.20\.0/.test(titleV17), titleV17)
 
   // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
   const P17 = await ev(`(async()=>{
@@ -1752,7 +1752,7 @@ try {
     await closeStory()
   }
 
-  // ---- v0.18 任务链：5 条强化时机路径 + 百分比灌顶 + 剧情因果链 专项 ----
+  // ---- v0.18 任务链（v0.20 口径）：4 条正常强化时机路径 + 百分比灌顶 + 剧情因果链 专项 ----
   const V18 = await ev(`(async()=>{
     const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
     const stat=(opt)=>{
@@ -1780,24 +1780,25 @@ try {
       schema:(await (await fetch('./levels/levels.json')).json()).meta.schema,
       version:(await import('./version.js')).VERSION};
   })()`)
-  check('v0.18 任务链：5 条强化时机路径全部通关（软门槛彻底成立）',
-    !!V18.early && !!V18.d18 && !!V18.d19 && !!V18.d20 && !!V18.none &&
-    V18.early.ok && V18.d18.ok && V18.d19.ok && V18.d20.ok && V18.none.ok,
-    JSON.stringify({early:V18.early?.total,d20:V18.d20?.total,none:V18.none?.total}))
+  check('v0.20 任务链：4 条正常强化时机路径全部通关（合理利用资源才能通关）',
+    !!V18.early && !!V18.d18 && !!V18.d19 && !!V18.d20 &&
+    V18.early.ok && V18.d18.ok && V18.d19.ok && V18.d20.ok,
+    JSON.stringify({early:V18.early?.total,d20:V18.d20?.total}))
   check('v0.18 任务链：灌顶按当前值 ×1.4（攻/防/血 100/100/200 → 140/140/280）',
     V18.pctAtk && V18.pctDef && V18.pctHp && V18.consumed)
   check('v0.18 任务链：晚强化终局 ATK/DEF 高于早强化（收益更高）',
     !!V18.early && !!V18.d20 && V18.d20.atk>V18.early.atk && V18.d20.def>V18.early.def,
     V18.early?.atk + '/' + V18.early?.def + ' → ' + V18.d20?.atk + '/' + V18.d20?.def)
-  check('v0.18 任务链：越晚强化越吃苦（总损血递增、终局 HP 递减）',
-    !!V18.early && !!V18.d20 && !!V18.none &&
-    V18.early.total<V18.d20.total && V18.d20.total<V18.none.total &&
-    V18.early.hp>V18.d20.hp && V18.d20.hp>V18.none.hp)
-  check('v0.18 任务链：完全不强化也能通关且未置 FAY_CHARGED（软门槛）',
-    !!V18.none && V18.none.ok && !(V18.none.flags&256))
+  check('v0.20 任务链：越晚强化越吃苦（4 条路径总损血递增、终局 HP 递减）',
+    !!V18.early && !!V18.d18 && !!V18.d19 && !!V18.d20 &&
+    V18.early.total<=V18.d18.total && V18.d18.total<=V18.d19.total && V18.d19.total<=V18.d20.total &&
+    V18.early.hp>=V18.d18.hp && V18.d18.hp>=V18.d19.hp && V18.d19.hp>=V18.d20.hp &&
+    V18.early.total<V18.d20.total && V18.early.hp>V18.d20.hp)
+  check('v0.20 任务链：完全不强化 noCharge 不再保证通关（用户本次明确澄清）',
+    !V18.none || !V18.none.ok)
   check('v0.18 任务链：任务格 13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e', V18.taskGrid)
-  check('v0.19 任务链：版本 v0.19.0 / meta.schema=10',
-    V18.version==='v0.19.0' && V18.schema===10, V18.version + ' / schema ' + V18.schema)
+  check('v0.20 任务链：版本 v0.20.0 / meta.schema=11',
+    V18.version==='v0.20.0' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
 
 
   // ---- v0.19 攻击吸血怪 / 前期精英化 / 后期普通怪 / 守门怪强化 专项端到端 ----
@@ -1835,8 +1836,8 @@ try {
             dist.reduce((a,b)=>a+b,0)===16,
       potion: ps.effect.hp===100 && pl.effect.hp===400,
       guard: t.MONSTERS.find(m=>m.ch==='6').hpW===1.5 && t.MONSTERS.find(m=>m.ch==='X').hpW===1.0,
-      schema: cfg.meta.schema===10 && cfg.meta.curve.lossGain===1.5,
-      version: (await import('./version.js')).VERSION==='v0.19.0'
+      schema: cfg.meta.schema===11 && cfg.meta.curve.lossGain===1.5,
+      version: (await import('./version.js')).VERSION==='v0.20.0'
     };
   })()`)
   check('v0.19 吸血怪：普伤为 0 时仍按当前 HP 15% 吸血（hpCost = k×吸血）', V19.noBreak,
@@ -1850,9 +1851,49 @@ try {
   check('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）', V19.grid)
   check('v0.19 血瓶 ×2 HP 供给（100 / 400）', V19.potion)
   check('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0', V19.guard)
-  check('v0.19 版本 v0.19.0 / schema10 / lossGain1.5', V19.schema && V19.version)
+  check('v0.20 版本 v0.20.0 / schema11 / lossGain1.5', V19.schema && V19.version)
 
 
+  // ---- v0.20 前期防杀抑制：端到端回放 + 帮助弹层口径 ----
+  const V20 = await ev(`(async()=>{
+    const t=await import('./tables.js'), l=await import('./logic.js'), sv=await import('./solver.js');
+    const DIR={left:[-1,0],right:[1,0],up:[0,-1],down:[0,1]};
+    const sol=sv.findSolution(); let s=l.newGame(), zero=0, n=0, earlyLoss=0;
+    for(const d of sol.steps){
+      if(s.ended) break;
+      const dl=DIR[d]; if(!dl) continue;
+      const mon=t.monsterByCh(l.tileAt(s,s.x+dl[0],s.y+dl[1]));
+      if(mon){
+        const m=l.scaledMon(mon,s.floor,s.hero), r=l.calcBattle(s.hero,mon,s.floor);
+        const charged=!!(s.hero.flags&l.FLAG.FAY_CHARGED);
+        if(s.floor<11 && !charged && !m.pierce && !m.drain && !m.elite && r.ok && mon.ch!=='6'){
+          n++; if(r.monPerHit===0) zero++; earlyLoss+=r.hpCost;
+        }
+      }
+      s=l.resolveStep(s,d).state;
+    }
+    const fs=t.FLOOR_SCALE;
+    return {
+      zero, n, earlyLoss, win:s.ended==='win', steps:sol.steps.length,
+      atk11:[29,61,55,70,99,110,112,120,134,150,158].every((v,i)=>fs[i].atk===v),
+      tail:fs.slice(11,21).every((v,i,a)=>i===0||v.atk>=a[i-1].atk),
+      schema:(await (await fetch('./levels/levels.json')).json()).meta.schema===11,
+      version:(await import('./version.js')).VERSION==='v0.20.0'
+    };
+  })()`)
+  check('v0.20 前期防杀消除：正式回放 1F~11F 常规怪零伤率 0%', V20.zero===0 && V20.n>0,
+    V20.zero+'/'+V20.n)
+  check('v0.20 前期难度上调：首次推进累计损血 >= 3000（基线 2075）', V20.earlyLoss>=3000,
+    String(V20.earlyLoss))
+  check('v0.20 默认回放仍通关且 3410 步', V20.win && V20.steps===3410)
+  check('v0.20 前 11 组 ATK 定稿值 + 12F 起不回落', V20.atk11 && V20.tail)
+  check('v0.20 版本 v0.20.0 / meta.schema=11', V20.version && V20.schema)
+  const helpRule20 = await ev("document.querySelector('#helpRule').textContent")
+  check('v0.20 文案：帮助弹层渲染出防杀消除 / 合理利用金币经验',
+    /防杀/.test(helpRule20) && /合理利用手上的金币与经验/.test(helpRule20),
+    'len=' + (helpRule20 ? helpRule20.length : 0))
+  check('v0.20 文案：帮助弹层不再宣称「不回去强化也能硬扛到塔顶」',
+    !/不回去强化也能硬扛到塔顶/.test(helpRule20))
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {
   check('脚本执行未抛错', false, e.message)

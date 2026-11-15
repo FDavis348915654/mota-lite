@@ -271,10 +271,14 @@ ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互
 ok('CHANGELOG 保留 v0.17.0 条目（怪防 / 高防挡路怪 / 难度提高）',
   CHANGELOG.some(c => c.v === 'v0.17.0' && c.note.includes('防御') &&
     c.note.includes('挡路') && c.note.includes('难度')))
-ok('CHANGELOG 首条为 v0.19.0 且说明攻击吸血怪 / 不管破防 / 先打怪还是先捡血瓶 / 守门怪强化',
-  CHANGELOG[0].v === 'v0.19.0' && CHANGELOG[0].note.includes('攻击吸血怪') &&
-  CHANGELOG[0].note.includes('不管能不能破防') && CHANGELOG[0].note.includes('先打怪还是先捡血瓶') &&
-  CHANGELOG[0].note.includes('守门怪') && CHANGELOG[0].note.includes('噬血蝠'))
+ok('CHANGELOG 首条为 v0.20.0 且说明难度曲线 / 防杀 / 合理利用金币经验 / 4 条路径口径',
+  CHANGELOG[0].v === 'v0.20.0' && CHANGELOG[0].note.includes('难度曲线再次调高') &&
+  CHANGELOG[0].note.includes('防杀') && CHANGELOG[0].note.includes('合理利用手上的金币') &&
+  CHANGELOG[0].note.includes('4 条正常强化时机路径'))
+ok('CHANGELOG 保留 v0.19.0 条目（攻击吸血怪 / 不管破防 / 先打怪还是先捡血瓶 / 守门怪强化）',
+  CHANGELOG.some(c => c.v === 'v0.19.0' && c.note.includes('攻击吸血怪') &&
+    c.note.includes('不管能不能破防') && c.note.includes('先打怪还是先捡血瓶') &&
+    c.note.includes('守门怪') && c.note.includes('噬血蝠')))
 ok('CHANGELOG 保留 v0.18.0 条目（任务顺序重排 / 软门槛 / 百分比灌顶 / 剧情深度）',
   CHANGELOG.some(c => c.v === 'v0.18.0' && c.note.includes('任务顺序重排') &&
     c.note.includes('软门槛') && c.note.includes('百分比') && c.note.includes('剧情深度')))
@@ -368,10 +372,10 @@ ok('make_levels.py 常规怪 atkW 收敛 / pierce 权重减半（防净伤放大
   genPy.includes("'atkW': 1.05, 'defW': 0.9"))
 ok('make_levels.py BARRIER_BOOST 收敛为温和台阶（hp1.2/atk1.04/def1.0）',
   genPy.includes("BARRIER_BOOST = {'hp': 1.2, 'atk': 1.04, 'def': 1.0}"))
-ok('make_levels.py meta.schema = 10（v0.19 攻击吸血怪 / 前期精英化）', genPy.includes("'schema': 10"))
-ok('levels.json 有 defRatio 曲线与 schema 10',
+ok('make_levels.py meta.schema = 11（v0.20 前期防杀抑制）', genPy.includes("'schema': 11"))
+ok('levels.json 有 defRatio 曲线与 schema 11',
   read('levels/levels.json').includes('"defRatio": 0.65') &&
-  read('levels/levels.json').includes('"schema": 10'))
+  read('levels/levels.json').includes('"schema": 11'))
 ok('browser_check.mjs 有 v0.17 高防端到端专项',
   browserCheck.includes('v0.17 高防'))
 
@@ -443,4 +447,21 @@ ok('build_tables.py HEADER 有 v0.19 口径（drain=15% / schema 10）',
 ok('browser_check.mjs 有 v0.19 吸血怪端到端专项',
   browserCheck.includes('v0.19 吸血怪'))
 
+// ---- v0.20 前期防杀抑制：静态防漂移 ----
+ok('make_levels.py 有 DEF_GROWTH / ANTI_BLOCK_K 且前 11 组 atk 返回后处理',
+  genPy.includes('DEF_GROWTH = [3, 20, 0, 10, 20, 10, 0, 5, 0, 0, 3]') &&
+  genPy.includes('ANTI_BLOCK_K = 1.5') &&
+  genPy.includes("out[f]['atk'] += round(ANTI_BLOCK_K * DEF_GROWTH[f])\n    return out"))
+ok('make_levels.py meta.note 含 v0.20 防杀抑制说明',
+  genPy.includes('v0.20 前期防杀抑制'))
+ok('v0.20 帮助文案已改口径：不再宣称「完全不强化也能硬扛通关」',
+  !read('texts.js').includes('完全不强化也能硬扛通关') &&
+  !read('texts.js').includes('不回去强化也能硬扛到塔顶') &&
+  read('texts.js').includes('合理利用手上的金币与经验'))
+ok('v0.20 验收口径：4 条正常路径 / noCharge 不再保证通关（离线 + 浏览器同步）',
+  read('tools/validate_logic.mjs').includes('四条正常强化时机路径') &&
+  read('tools/validate_logic.mjs').includes('noCharge）不再保证通关') &&
+  read('tools/browser_check.mjs').includes('noCharge 不再保证通关'))
+ok('v0.20 build_tables.py HEADER 有防杀抑制说明',
+  read('tools/build_tables.py').includes('v0.20：前期防杀抑制'))
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

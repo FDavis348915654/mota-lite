@@ -1,5 +1,5 @@
 {
-  "version": "0.19.0",
+  "version": "0.20.0",
   "sprites": {
     "image": "assets/sprites.png",
     "atlas": "assets/sprites.json",

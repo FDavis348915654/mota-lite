@@ -105,9 +105,12 @@ ok('外推段 hp/atk 严格递增、def 不回落（高层精英不退化）',
 ok('每组含 hp/atk/def 且为正数', data.floorScale.every(s =>
   Number.isFinite(s.hp) && Number.isFinite(s.atk) && Number.isFinite(s.def) &&
   s.hp > 0 && s.atk > 0 && s.def >= 0))
-ok('怪 ATK 逐层单调递增（修 100% 零伤根因）',
-  data.floorScale.every((s, i) => i === 0 || s.atk >= data.floorScale[i - 1].atk),
-  data.floorScale[0].atk + ' → ' + data.floorScale[20].atk)
+const V20_ATK = [29, 61, 55, 70, 99, 110, 112, 120, 134, 150, 158]
+ok('v0.20 前期防杀抑制：前 11 组 ATK 按层内 DEF 成长 ×1.5 补偿（定稿值）',
+  V20_ATK.every((v, i) => data.floorScale[i].atk === v), V20_ATK.join(','))
+ok('v0.20 抬升不向后传播：12F~21F 怪 ATK 严格单调递增',
+  data.floorScale.slice(11, 21).every((s, i, a) => i === 0 || s.atk >= a[i - 1].atk),
+  '12F=' + data.floorScale[11].atk + ' → 21F=' + data.floorScale[20].atk)
 ok('怪 HP 逐层不递减', data.floorScale.every((s, i) => i === 0 || s.hp >= data.floorScale[i - 1].hp))
 ok('10 种怪、字符 1-9 + X 全有对应（v0.19 新增 9 噬血蝠）', data.monsters.length === 10 &&
   '123456789X'.split('').every(ch => data.monsters.some(m => m.ch === ch)),
@@ -193,7 +196,7 @@ console.log('\n=== 1e. v0.13 经验 / 盗贼任务线 / 老者炸弹 / 16F 封�
 const chAt = (f, ch) => f.rows.join('').split(ch).length - 1
 const floorHas = (n, ch) => chAt(data.floors[n - 1], ch) > 0
 const totalOf = ch => data.floors.reduce((s, f) => s + chAt(f, ch), 0)
-ok('meta.schema 升到 10（v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化）', data.meta.schema === 10, String(data.meta.schema))
+ok('meta.schema 升到 11（v0.20 前期防杀抑制 / 难度曲线调高）', data.meta.schema === 11, String(data.meta.schema))
 ok('16F 上楼唯一入口是封印门 Z，且全塔仅此 1 道',
   floorHas(16, 'Z') && totalOf('Z') === 1 && doorsIn(data.floors[15])[0] === 'Z')
 ok('doorKey 不含 Z（三色钥匙打不开封印门）', !('Z' in data.doorKey), JSON.stringify(data.doorKey))
@@ -291,8 +294,8 @@ ok('每处暗门 A 至少有一个真正可走的邻格（非墙非实体）',
     })
   }))
 // ---- v0.16 小精灵 / 能量核心 / 屏障配置 ----
-ok('meta.schema = 10 且 levels.json 有 barrier 段',
-  data.meta.schema === 10 && !!data.barrier)
+ok('meta.schema = 11 且 levels.json 有 barrier 段',
+  data.meta.schema === 11 && !!data.barrier)
 ok('barrier 配置：台阶 15F(floor=14) / 核心 17F(coreFloor=16) / 精灵 1F / chargeRatio=0.40',
   data.barrier.floor === 14 && data.barrier.coreFloor === 16 && data.barrier.fairyFloor === 0 &&
   data.barrier.boost.hp > 1 && data.barrier.chargeRatio === 0.4)
@@ -328,8 +331,9 @@ ok('meta.curve 有 defRatio=0.65 / battleRounds=5 / lossGain=1.5 / costMul=5.0',
 ok('FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=140、逐层不回落',
   data.floorScale[0].def >= 13 && data.floorScale[20].def >= 140 &&
   data.floorScale.slice(0, 21).every((s, i, a) => i === 0 || s.def >= a[i - 1].def))
-ok('标准怪 def/怪攻 提升到 0.3~0.6（v0.16 仅 0.14~0.24）',
-  data.floorScale.slice(0, 21).every(s => s.def / s.atk >= 0.28) &&
+const V20_ACT_A = [20,23,26,26,45,58,64,67,103,103,106,125,138,151,151,170,183,186,189,220,223]
+ok('v0.20 怪防仍按 0.65×玩家进层 ATK 精确建模（抬攻不削弱破防难度）',
+  data.floorScale.slice(0, 21).every((s, i) => Math.abs(s.def - Math.round(0.65 * V20_ACT_A[i])) <= 1) &&
   data.floorScale[20].def / data.floorScale[20].atk >= 0.45)
 const wallMon17 = data.monsters.find(m => m.ch === '6')
 ok('m6 守门怪高防低攻且 hpW 大幅提升到 1.5（defW>=1.2 / atkW<=0.95）',
@@ -396,8 +400,8 @@ ok('1F~16F 的 FLOOR_SCALE 与 v0.17 完全一致（表头未漂移）',
   data.floorScale[15].def === 110)
 
 // ---- v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化：结构专项 ----
-ok('v0.19 meta.schema = 10 且 meta.curve.lossGain = 1.5',
-  data.meta.schema === 10 && data.meta.curve.lossGain === 1.5)
+ok('v0.20 meta.schema = 11 且 meta.curve.lossGain = 1.5',
+  data.meta.schema === 11 && data.meta.curve.lossGain === 1.5)
 ok('v0.19 第 10 种怪 m10 噬血蝠字段（drain0.15 / eliteBefore11 / eliteShift9 / defW1.0 / hpW0.55）',
   (() => { const m = data.monsters.find(x => x.ch === '9')
     return !!m && m.id === 'm10' && m.drain === 0.15 &&
@@ -422,5 +426,22 @@ ok('v0.19 每层实体怪恒 12（常规 + 吸血 9 互补）、21F 为 8',
 ok('v0.19 tables.js 导出 10 怪且 monsterByCh(9) 带 drain=0.15',
   t.MONSTERS.length === 10 && t.monsterByCh('9').drain === 0.15)
 
+// ---- v0.20 前期防杀抑制：结构专项 ----
+const V20_DEF = [13, 15, 17, 17, 29, 38, 42, 44, 67, 67, 69]
+ok('v0.20 前 11 组怪防与 v0.19 逐项一致（只改 atk、不削弱破防）',
+  V20_DEF.every((v, i) => data.floorScale[i].def === v), V20_DEF.join(','))
+ok('v0.20 血瓶 100/400、守门怪 hpW1.5 / 宝库守卫 hpW1.0 全部不动',
+  (() => {
+    const ps = data.items.find(i => i.id === 'potion_s'), pl = data.items.find(i => i.id === 'potion_l')
+    const m6 = data.monsters.find(m => m.ch === '6'), mx = data.monsters.find(m => m.ch === 'X')
+    return ps && pl && m6 && mx && ps.effect.hp === 100 && pl.effect.hp === 400 &&
+      m6.hpW === 1.5 && mx.hpW === 1.0
+  })())
+ok('v0.20 前 21 组怪 HP 与怪防逐层不回落（只有 atk 被抬升）',
+  data.floorScale.slice(0, 21).every((s, i, a) => i === 0 ||
+    (s.hp >= a[i - 1].hp && s.def >= a[i - 1].def)))
+ok('v0.20 吸血怪 16 只与 v0.19 机制零回退（10 怪 / lossGain 1.5）',
+  data.monsters.length === 10 && !!data.monsters.find(m => m.ch === '9') &&
+  data.meta.curve.lossGain === 1.5 && data.meta.schema === 11)
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

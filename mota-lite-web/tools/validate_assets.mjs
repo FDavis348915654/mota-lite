@@ -217,8 +217,14 @@ ok('v0.19 图鉴有 m10 噬血蝠描述（15% / 堆防 / 先打怪再捡血瓶�
 ok('v0.19 帮助文案说明吸血独立于破防 / 前期精英 / 12F 回落 / 石头人加厚',
   /堆防挡不住/.test(TEXTS.help.rule) && /15%/.test(TEXTS.help.rule) &&
   /前期/.test(TEXTS.help.rule) && /12F 起/.test(TEXTS.help.rule) && /石头人/.test(TEXTS.help.rule))
-ok('v0.19 manifest 版本与 version.js 对齐（0.19.0 / v0.19.0）',
-  JSON.parse(readText('assets/manifest.json')).version === '0.19.0' && VERSION === 'v0.19.0')
+ok('v0.20 manifest 版本与 version.js 对齐（0.20.0 / v0.20.0）',
+  JSON.parse(readText('assets/manifest.json')).version === '0.20.0' && VERSION === 'v0.20.0')
 
+ok('v0.20 帮助文案说明前期防杀消除 / 合理利用金币与经验',
+  /防杀/.test(TEXTS.help.rule) && /合理利用手上的金币与经验/.test(TEXTS.help.rule) &&
+  /v0\.20 难度曲线再次调高/.test(TEXTS.help.rule))
+ok('v0.20 帮助文案不再宣称「不强化也能通关」',
+  !/完全不强化也能硬扛通关/.test(TEXTS.help.optional) &&
+  !/不回去强化也能硬扛到塔顶/.test(TEXTS.help.rule))
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

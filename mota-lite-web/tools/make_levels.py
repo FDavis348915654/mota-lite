@@ -229,6 +229,26 @@ CURVE_CFG = dict(loss0=24, lossK=2.4, rounds=3, defGap=6, atkFloor=16, lossMul=1
                  # v0.16 实测标定：全塔实际总损血 6558 ≈ sum(targetLoss) 1312 × 5.0。
                  # 用单一标量把「摊薄基数」换算成真实每怪损血，避免逐层锯齿。
                  costMul=5.0)
+# v0.20：前期「防杀」抑制 —— 用户反馈「难度曲线再次调高，前期玩家应该很难
+#   出现防杀才对」。根因（/tmp/v20_phase.mjs 正式回放量化）：build_floor_scale 的
+#   怪 ATK = ACT_D[f] + mon_per_hit，其中 ACT_D[f] 建模的是玩家【进层】DEF，
+#   但玩家按「先扫光资源再清怪」推进，会在【本层内】捡铁盾/宝石把 DEF 顶高
+#   +3~20，直接越过怪 ATK -> monPerHit = max(0, m.atk - hero.def) = 0 -> 零损血。
+#   首次推进（未灌顶）1F~11F 常规怪 112 场里 37 场零伤（33%），2F/4F/5F/6F
+#   高达 80~91%，首次防杀出现在 2F（捡盾后 DEF46 >= 怪 ATK29）。
+# 治本（配置层，不堆数值）：DEF_GROWTH 是每层实测的「层内 DEF 成长」(max-min)，
+#   把前 11 组 FLOOR_SCALE.atk 抬到「玩家清怪时的 DEF」再上浮 50%（ANTI_BLOCK_K），
+#   让净伤精确回到设计值并额外加码 —— 前期每场都得掉血、难度曲线自然抬高。
+# 关键约束：抬升必须作为【返回后处理】，不能并进循环内的前缀最大值钳制链
+#   (atk = max(atk, out[-1]['atk']))，否则会向后传播到 12F 以后、把守门怪
+#   (9~17 回合) 的净伤放大成 lethal 切断主路（常数抬攻 C>=18 实测 findSolution=null）。
+#   外推段只用末尾 out[-1]/out[-4]，不受前 11 组影响。
+# 口径（用户本次明确澄清）：「完全不强化也能通关」不是需求，通关应建立在
+#   合理利用金币/经验/灌顶等成长资源上；故验收只看 4 条正常强化时机路径
+#   (立刻 / 延后 18F / 19F / 20F)，noCharge 允许过不去。
+DEF_GROWTH = [3, 20, 0, 10, 20, 10, 0, 5, 0, 0, 3]
+ANTI_BLOCK_K = 1.5
+
 # v0.16：精灵大幅强化后玩家终局 DEF 约 338，旧 atk=300 会让魔王战零伤
 # （v0.15 为 -110HP）。提到 380 使终局仍有 3×(380-338)=126 左右损血，
 # 保持「难度提高」下 Boss 战不至于毫无压力；裸属性仍破不了魔王的防。
@@ -339,6 +359,9 @@ def build_floor_scale(cnt):
             'def': last['def'] + step['def'] * (k + 1),
             'targetLoss': last['targetLoss'], 'mobs': last['mobs'],
         })
+    # v0.20 防杀抑制（返回后处理，不进前缀钳制链 / 不污染精英外推段）
+    for f in range(min(len(DEF_GROWTH), 21)):
+        out[f]['atk'] += round(ANTI_BLOCK_K * DEF_GROWTH[f])
     return out
 
 
@@ -1193,8 +1216,8 @@ def build():
 
     data = {
         'meta': {
-            'schema': 10,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈 + v0.18 任务顺序重排/核心移 17F 商人房/台阶提前 15F/软门槛/强化改按当前值百分比/护盾加成强化后取消 + v0.19 攻击吸血怪 9（按玩家当前 HP 15%/次、独立于破防伤害）/前期精英化 eliteBefore/12F 起进常规池/守门怪 hp×1.5/常规怪损血 ×1.15/4 处宝库守卫强度上调）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 11,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈 + v0.18 任务顺序重排/核心移 17F 商人房/台阶提前 15F/软门槛/强化改按当前值百分比/护盾加成强化后取消 + v0.19 攻击吸血怪 9（按玩家当前 HP 15%/次、独立于破防伤害）/前期精英化 eliteBefore/12F 起进常规池/守门怪 hp×1.5/常规怪损血 ×1.15/4 处宝库守卫强度上调 + v0.20 前期防杀抑制（怪 ATK 建模基准由「进层 DEF」修正为「清怪时 DEF」再上浮 50%/前期零伤 30%→0%/难度曲线调高；血瓶·守门怪·逻辑层均不动）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},
@@ -1249,6 +1272,7 @@ def build():
         print(f"  {i+1:2d}F {f['theme']:6s} {room:5s} 实体{entities:2d} " + ' '.join(special))
     drain_cnt = sum(''.join(f['rows']).count(DRAIN_CH) for f in floors)
     print('v0.19 吸血怪 9 总数:', drain_cnt, '（1F~11F 每层精英 / 12F 起隔层普通）')
+    print('v0.20 前期防杀抑制：前', len(DEF_GROWTH), '层怪 ATK 基准 +round(1.5×层内DEF成长)（前期零伤 30%→0%）')
     tx = sum(''.join(f['rows']).count(ELITE_CH) for f in floors)
     print('v0.15 走廊闸墙瓶颈:', sum(len(g) for g in gates_by_floor), '处（每层',
           min(len(g) for g in gates_by_floor), '~', max(len(g) for g in gates_by_floor),

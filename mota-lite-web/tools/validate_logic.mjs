@@ -172,7 +172,9 @@ ok('FLOOR_SCALE = 21 逐层 + 9 外推 = 30 组', FLOOR_SCALE.length === 30,
   FLOOR_SCALE.length + ' 组')
 ok('外推段数值仍递增（高层精英不退化）',
   FLOOR_SCALE.slice(21).every((s, i, a) => i === 0 || (s.atk > a[i - 1].atk && s.hp > a[i - 1].hp)))
-ok('逐层怪 ATK 单调递增', FLOOR_SCALE.every((s, i) => i === 0 || s.atk >= FLOOR_SCALE[i - 1].atk),
+ok('v0.20 前期防杀抑制：前 11 组 ATK 定稿值 + 12F 起严格递增（抬升不向后传播）',
+  [29, 61, 55, 70, 99, 110, 112, 120, 134, 150, 158].every((v, i) => FLOOR_SCALE[i].atk === v) &&
+  FLOOR_SCALE.slice(11, 21).every((s, i, a) => i === 0 || s.atk >= a[i - 1].atk),
   '1F=' + FLOOR_SCALE[0].atk + ' → 21F=' + FLOOR_SCALE[20].atk)
 ok('同一只怪在 21F 显著强于 1F', scaledMon(slime, 20).hp > scaledMon(slime, 0).hp * 3,
   scaledMon(slime, 0).hp + ' → ' + scaledMon(slime, 20).hp)
@@ -1169,16 +1171,18 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
   const early = stat()
   const d18 = stat({ chargeFloor: 17 }), d19 = stat({ chargeFloor: 18 })
   const d20 = stat({ chargeFloor: 19 }), none = stat({ noCharge: true })
-  ok('v0.18 五条强化时机路径全部通关（软门槛彻底成立）',
-    !!(early && d18 && d19 && d20 && none &&
-       early.ok && d18.ok && d19.ok && d20.ok && none.ok))
+  ok('v0.20 四条正常强化时机路径全部通关（合理利用金币/经验/灌顶才能通关）',
+    !!(early && d18 && d19 && d20 &&
+       early.ok && d18.ok && d19.ok && d20.ok))
   ok('晚强化终局 ATK / DEF 高于早强化（收益更高）',
     !!(early && d20 && d20.atk > early.atk && d20.def > early.def))
-  ok('越晚强化总损血越高、终局 HP 越低（用血换属性）',
-    !!(early && d20 && none && early.total < d20.total && d20.total < none.total &&
-       early.hp > d20.hp && d20.hp > none.hp))
-  ok('完全不强化也能通关且 flags 不含 FAY_CHARGED（软门槛）',
-    !!(none && none.ok && !(none.flags & FLAG.FAY_CHARGED)))
+  ok('v0.20 越晚强化总损血越高、终局 HP 越低（4 条路径梯度）',
+    !!(early && d18 && d19 && d20 &&
+       early.total <= d18.total && d18.total <= d19.total && d19.total <= d20.total &&
+       early.hp >= d18.hp && d18.hp >= d19.hp && d19.hp >= d20.hp &&
+       early.total < d20.total && early.hp > d20.hp))
+  ok('v0.20 口径：完全不强化（noCharge）不再保证通关（用户本次明确澄清）',
+    none === null || !none.ok)
   ok('默认攻略完成灌顶、核心已消耗',
     !!(early && (early.flags & FLAG.FAY_CHARGED) && !(early.flags & FLAG.CORE_HELD)))
   ok('正式回放步数口径不漂移（3410 步）', !!(early && early.steps === 3410))
@@ -1229,5 +1233,30 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
     readFileSync(new URL('../levels/levels.json', import.meta.url), 'utf8').includes('"lossGain": 1.5'))
 }
 
+// ---- v0.20 前期防杀抑制：正式回放置化（最强判据）----
+{
+  const DIR20 = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }
+  const sol20 = findSolution()
+  let s20 = newGame(), zero20 = 0, n20 = 0, earlyLoss20 = 0
+  for (const d of sol20.steps) {
+    if (s20.ended) break
+    const dl = DIR20[d]; if (!dl) continue
+    const mon = monsterByCh(tileAt(s20, s20.x + dl[0], s20.y + dl[1]))
+    if (mon) {
+      const m = scaledMon(mon, s20.floor, s20.hero)
+      const r = calcBattle(s20.hero, mon, s20.floor)
+      const charged = !!(s20.hero.flags & FLAG.FAY_CHARGED)
+      if (s20.floor < 11 && !charged && !m.pierce && !m.drain && !m.elite && r.ok && mon.ch !== '6') {
+        n20++; if (r.monPerHit === 0) zero20++; earlyLoss20 += r.hpCost
+      }
+    }
+    s20 = resolveStep(s20, d).state
+  }
+  ok('v0.20 前期防杀消除：首次推进 1F~11F 常规怪零伤率 = 0%', n20 > 0 && zero20 === 0,
+    n20 + ' 场 / 零伤 ' + zero20)
+  ok('v0.20 前期难度上调：首次推进 1F~11F 累计损血 >= 3000（基线 2075）',
+    earlyLoss20 >= 3000, String(earlyLoss20))
+  ok('v0.20 默认回放仍通关且 3410 步', s20.ended === 'win' && sol20.steps.length === 3410)
+}
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

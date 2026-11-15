@@ -58,6 +58,9 @@
 // v0.19：攻击吸血怪 9（drain=15%×玩家当前 HP，独立于破防伤害、普伤为 0 也扣）；
 //   前期 eliteBefore 套超前层成为「打不过、后期回头打」的精英，12F 起进常规池；
 //   守门怪 hp×1.5 / 常规怪损血 ×1.15 / 4 处宝库守卫强度上调；schema 升 10。
+// v0.20：前期防杀抑制 —— 前 11 组 FLOOR_SCALE.atk 按实测层内 DEF 成长 ×1.5
+//   补偿（返回后处理，不进前缀钳制链），前期零伤 30%→0%、难度曲线调高；
+//   血瓶 / 守门怪 / 逻辑层均不动；schema 升 11。
 // ---- tile 字符 -> 色块颜色 ----
 export const TILE_COLOR = {
   "#": "#37474f",
@@ -1110,14 +1113,14 @@ export const SECRET = [
 export const FLOOR_SCALE = [
   {
     "hp": 29,
-    "atk": 25,
+    "atk": 29,
     "def": 13,
     "targetLoss": 31,
     "mobs": 12
   },
   {
     "hp": 33,
-    "atk": 31,
+    "atk": 61,
     "def": 15,
     "targetLoss": 34,
     "mobs": 12
@@ -1131,21 +1134,21 @@ export const FLOOR_SCALE = [
   },
   {
     "hp": 37,
-    "atk": 55,
+    "atk": 70,
     "def": 17,
     "targetLoss": 41,
     "mobs": 12
   },
   {
     "hp": 65,
-    "atk": 69,
+    "atk": 99,
     "def": 29,
     "targetLoss": 44,
     "mobs": 12
   },
   {
     "hp": 81,
-    "atk": 95,
+    "atk": 110,
     "def": 38,
     "targetLoss": 47,
     "mobs": 12
@@ -1159,7 +1162,7 @@ export const FLOOR_SCALE = [
   },
   {
     "hp": 93,
-    "atk": 112,
+    "atk": 120,
     "def": 44,
     "targetLoss": 53,
     "mobs": 12
@@ -1180,7 +1183,7 @@ export const FLOOR_SCALE = [
   },
   {
     "hp": 149,
-    "atk": 154,
+    "atk": 158,
     "def": 69,
     "targetLoss": 62,
     "mobs": 12
