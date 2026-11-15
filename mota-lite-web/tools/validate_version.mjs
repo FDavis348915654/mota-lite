@@ -271,10 +271,17 @@ ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互
 ok('CHANGELOG 保留 v0.17.0 条目（怪防 / 高防挡路怪 / 难度提高）',
   CHANGELOG.some(c => c.v === 'v0.17.0' && c.note.includes('防御') &&
     c.note.includes('挡路') && c.note.includes('难度')))
-ok('CHANGELOG 首条为 v0.20.1 且说明振屏范围 / 振屏开关 / 防御 +20%',
-  CHANGELOG[0].v === 'v0.20.1' && CHANGELOG[0].note.includes('振屏') &&
-  CHANGELOG[0].note.includes('开关') && CHANGELOG[0].note.includes('20%'))
-// v0.20.1 成为首条（patch），v0.20.0 记录改为「存在该条目」（沿用 v0.13.1 的处理）
+ok('CHANGELOG 首条为 v0.21.0 且说明常规小怪增益 / 花光资源通关 / 囚禁剧情 / 点击排队',
+  CHANGELOG[0].v === 'v0.21.0' && CHANGELOG[0].note.includes('常规小怪') &&
+  CHANGELOG[0].note.includes('花光资源') && CHANGELOG[0].note.includes('囚禁') &&
+  CHANGELOG[0].note.includes('点击排队') && CHANGELOG[0].note.includes('DEF_GAIN'))
+// v0.21.0 成为首条（minor），v0.20.2 / v0.20.1 记录改为「保留该条目」
+ok('CHANGELOG 保留 v0.20.2 条目（缓存根因 / import map / 资源参数）',
+  CHANGELOG.some(c => c.v === 'v0.20.2' && c.note.includes('缓存') &&
+    c.note.includes('import map') && c.note.includes('?r=')))
+ok('CHANGELOG 保留 v0.20.1 条目（振屏范围 / 振屏开关 / 防御 +20%）',
+  CHANGELOG.some(c => c.v === 'v0.20.1' && c.note.includes('振屏') &&
+    c.note.includes('开关') && c.note.includes('20%')))
 ok('CHANGELOG 保留 v0.20.0 条目（难度曲线 / 防杀 / 合理利用金币经验 / 4 条路径口径）',
   CHANGELOG.some(c => c.v === 'v0.20.0' && c.note.includes('难度曲线再次调高') &&
     c.note.includes('防杀') && c.note.includes('合理利用手上的金币') &&
@@ -287,10 +294,35 @@ ok('CHANGELOG 保留 v0.18.0 条目（任务顺序重排 / 软门槛 / 百分比
   CHANGELOG.some(c => c.v === 'v0.18.0' && c.note.includes('任务顺序重排') &&
     c.note.includes('软门槛') && c.note.includes('百分比') && c.note.includes('剧情深度')))
 
+// ---- v0.20.2 静态资源 cache-bust（import map）：静态防漂移 ----
+// 线上响应只有 last-modified、无 Cache-Control，裸路径资源会被浏览器长期缓存，
+// 导致新版改动在端上不生效。参数由 sync_cache_bust.py 从 VERSION 派生，每次递增版本必变。
+const bustKeys = [...html.matchAll(/\?r=([0-9.]+)/g)].map(m => m[1])
+const bustExpect = CHANGELOG[0].v.replace(/^v/, '')
+ok('index.html 有 import map（静态资源 cache-bust）', html.includes('type="importmap"'))
+ok('全部 ?r= 参数与 VERSION 一致（9 处）',
+  bustKeys.length === 9 && bustKeys.every(k => k === bustExpect), bustKeys.join(','))
+ok('import map 覆盖全部 7 个模块入口',
+  ['app.js', 'logic.js', 'tables.js', 'solver.js', 'version.js', 'texts.js', 'records.js']
+    .every(f => html.includes('"./' + f + '": "./' + f + '?r=' + bustExpect + '"')))
+ok('app.js 入口与 style.css 均带 cache-bust',
+  html.includes('src="./app.js?r=' + bustExpect + '"') &&
+  html.includes('href="./style.css?r=' + bustExpect + '"'))
+ok('所有 .js 的 import 说明符保持裸路径（import map 零侵入）',
+  app.includes("from './version.js'") && !app.includes('?r=') && !logicSrc.includes('?r='))
+ok('index.html 带 no-cache meta', html.includes('http-equiv="Cache-Control"'))
+ok('sync_cache_bust.py 从 VERSION 派生参数且支持 --check',
+  read('tools/sync_cache_bust.py').includes('export const VERSION') &&
+  read('tools/sync_cache_bust.py').includes('--check'))
+
 // ---- v0.20.1 振屏范围 / 振屏开关 / 防御增益：静态防漂移 ----
 const manifest21 = JSON.parse(read('assets/manifest.json'))
-ok('manifest.json version = 0.20.1', manifest21.version === '0.20.1', manifest21.version)
-ok('logic.js 定义 DEF_GAIN=1.2', /DEF_GAIN:\s*1\.2/.test(logicSrc))
+ok('manifest.json version = 0.21.0', manifest21.version === '0.21.0', manifest21.version)
+ok('logic.js 定义 v0.21.0 常规小怪增益（ATK1.2 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.3）且移除 DEF_GAIN 死局旋钮',
+  /MOB_ATK_GAIN:\s*1\.2/.test(logicSrc) && /MOB_DEF_GAIN:\s*1\.5/.test(logicSrc) &&
+  /MOB_DEF_CAP_MULT:\s*1\.15/.test(logicSrc) &&
+  /MOB_HP_SCALE_FRONT:\s*0\.6/.test(logicSrc) && /MOB_HP_SCALE_BACK:\s*0\.3/.test(logicSrc) &&
+  !/DEF_GAIN:\s*1\.2/.test(logicSrc) && !logicSrc.includes('CONFIG.DEF_GAIN'))
 ok('logic.js 清理死配置 VIBRATE_GAP', !logicSrc.includes('VIBRATE_GAP:'))
 ok('logic.js 仅 4 处 vibrate 事件', (logicSrc.match(/\{ t: 'vibrate' \}/g) || []).length === 4)
 ok('app.js 振屏开关 vibOn 全链路（pulse 拦截 / 持久化 / 双按钮）',
@@ -302,11 +334,11 @@ ok('index.html 有 btnVib / setVib 注入点',
   html.includes('id="btnVib"') && html.includes('id="setVib"'))
 ok('texts.js 有 vibOn / vibOff 文案',
   textsSrcV.includes('vibOn:') && textsSrcV.includes('vibOff:'))
-ok('validate_logic.mjs 有 v0.20.1 专项段（基线隔离 + 增益验证）',
-  read('tools/validate_logic.mjs').includes('=== v0.20.1') &&
-  read('tools/validate_logic.mjs').includes('CONFIG.DEF_GAIN = 1'))
-ok('validate_assets.mjs 版本对齐已改 0.20.1',
-  read('tools/validate_assets.mjs').includes("version === '0.20.1'"))
+ok('validate_logic.mjs 有 v0.21.0 专项段且已清除 DEF_GAIN 基线隔离',
+  read('tools/validate_logic.mjs').includes('=== v0.21.0') &&
+  !read('tools/validate_logic.mjs').includes('CONFIG.DEF_GAIN ='))
+ok('validate_assets.mjs 版本对齐已改 0.21.0',
+  read('tools/validate_assets.mjs').includes("version === '0.21.0'"))
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
 ok('make_levels.py 有隔间 / 宝库 / 精英常量',
@@ -439,9 +471,10 @@ ok('browser_check.mjs 有 v0.18 任务链端到端专项',
   browserCheck.includes('v0.18 任务链'))
 
 // ---- v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化：静态防漂移 ----
-ok('make_levels.py 有 v0.19 吸血怪常量（字符 9 / 15% / eliteBefore 11 / shift 9）',
+ok('make_levels.py 有 v0.21 吸血怪常量（字符 9 / 15% / eliteBefore 11 / shift 7）',
   genPy.includes("DRAIN_CH = '9'") && genPy.includes('DRAIN_RATIO = 0.15') &&
-  genPy.includes('DRAIN_ELITE_BEFORE = 11') && genPy.includes('DRAIN_ELITE_SHIFT = 9'))
+  genPy.includes('DRAIN_ELITE_BEFORE = 11') && genPy.includes('DRAIN_ELITE_SHIFT = 7') &&
+  !genPy.includes('DRAIN_ELITE_SHIFT = 9'))
 ok('make_levels.py m10 噬血蝠带 drain / eliteBefore / eliteShift（k×r<1 硬约束，defW 恒 1.0）',
   genPy.includes("'id': 'm10'") && genPy.includes("'drain': DRAIN_RATIO") &&
   genPy.includes("'eliteBefore': DRAIN_ELITE_BEFORE") &&
@@ -488,4 +521,31 @@ ok('v0.20 验收口径：4 条正常路径 / noCharge 不再保证通关（离�
   read('tools/browser_check.mjs').includes('noCharge 不再保证通关'))
 ok('v0.20 build_tables.py HEADER 有防杀抑制说明',
   read('tools/build_tables.py').includes('v0.20：前期防杀抑制'))
+
+// ---- v0.21.0 常规小怪增益 / 囚禁剧情 / 点击排队：静态防漂移 ----
+const appV21 = read('app.js'), textsV21 = read('texts.js'), logicV21 = read('logic.js')
+ok('logic.js scaledMon 只对常规小怪增益（排除 noScale / elite / 高 defW / drain）',
+  logicV21.includes('if (mon.noScale) return mon') &&
+  logicV21.includes('const isCommon = !isElite && defW < 1.2 && !mon.drain') &&
+  logicV21.includes('MOB_DEF_CAP_MULT') && logicV21.includes('hpScale'))
+ok('texts.js 有首次商人感谢剧情 shop_free（被怪物囚禁 / 先道谢）',
+  textsV21.includes('shop_free:') && textsV21.includes('被怪物囚禁') &&
+  textsV21.includes('这份谢我得先说'))
+ok('texts.js 法师 / 盗贼 / 老者 / 结局统一「被怪物囚禁 · 顺路救出」口径',
+  textsV21.includes('怪物把我锁进这法阵') && textsV21.includes('怪物把我扔进来关了三天') &&
+  textsV21.includes('怪物把我看在这儿太久') && textsV21.includes('这一路救出来的，不止是公主'))
+ok('app.js 首次撞商店按 SHOP_SEEN 判定并先弹 shop_free',
+  appV21.includes('const shopSeenBefore') && appV21.includes('openShop(!shopSeenBefore)') &&
+  appV21.includes('function openShop(firstTime') && appV21.includes("queueStory('shop_free')"))
+ok('app.js 点击排队全链路（enqueue / pump / clear / 动画结束与剧情后触发）',
+  ['let inputQueue', 'function enqueueInput', 'function pumpInputQueue', 'function clearInputQueue',
+   "enqueueInput({ kind: 'walk'", "enqueueInput({ kind: 'dir'", 'pumpInputQueue()'].every(x => appV21.includes(x)))
+ok('app.js 动画期间点击 / 方向键改为排队而非丢弃',
+  appV21.includes("if (animating) { enqueueInput({ kind: 'walk', x, y }); return }") &&
+  appV21.includes('const aq = KEYMAP[k]'))
+ok('levels.json / tables.js 吸血蝠 eliteShift = 7',
+  JSON.parse(read('levels/levels.json')).monsters.find(m => m.ch === '9').eliteShift === 7 &&
+  read('tables.js').includes('"eliteShift": 7'))
+ok('browser_check.mjs 有 v0.21.0 剧情 / 手感端到端专项',
+  browserCheck.includes('v0.21.0 剧情') && browserCheck.includes('v0.21.0 手感'))
 console.log('\n' + (process.exitCode ? '存在失败项' : '全部 ' + pass + ' 项断言通过') + '。每次改动后记得递增 version.js 的 VERSION 并补 CHANGELOG。\n')

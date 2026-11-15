@@ -110,7 +110,9 @@ FAIRY_CHARGE_RATIO = 0.40   # 灌顶：攻/防/血 各 ×1.40（按强化时当�
 DRAIN_CH = '9'                 # 吸血怪字符（1-8 / X 已占用）
 DRAIN_RATIO = 0.15             # 每次怪物攻击按【战斗开始时玩家 HP】的 15% 吸血
 DRAIN_ELITE_BEFORE = 11        # 0-based 楼层索引：< 11（即 1F~11F）套超前层 = 精英
-DRAIN_ELITE_SHIFT = 9          # 前期精英超前 9 层（复用 FLOOR_SCALE 外推段）
+DRAIN_ELITE_SHIFT = 7          # v0.21.0：前期精英超前 9→7 层（用户「吸血怪前期削弱一点」/ 降前期精英层数）
+                               #   定标：9 时前期 11 层仅 1 层可打；7 时 1F 三围 atk75→60 / def67→44 / hp80→51，
+                               #   明显变弱但 1F~8F 仍打不过（8/11 层），保留「成长后回头打」语义；5 会放开到 6 层可打，削弱过头。
 WALL_GUARD_HPW = 1.5           # 守门怪 m6：hpW 1.0 -> 1.5（回合 6~11 -> 9~17）
 ELITE_HPW = 1.0                # 4 处宝库守卫：hpW 0.8 -> 1.0（只拉高强度）
 # HP 供给校准：常规怪 +15% / 守门怪 hp×1.5 / 吸血按 HP 15% 抽血三重叠加后，
@@ -1130,10 +1132,10 @@ def build():
         # 普伤为 0 也照扣；只扣玩家 HP、不回怪血（避免正反馈死局）。
         # 关键约束 k×drain < 1：r=15% -> k<=6，故 hpW=0.55 / defW=0.75
         # 把回合压到 2~3（实测余量充足）；atkW 压低，让吸血而非普伤成为主损血。
-        # defW 必须恒为 1.0：前期精英套 eliteShift=9 后怪 def 会高于玩家进层
+        # defW 必须恒为 1.0：前期精英套 eliteShift（v0.21.0 起 9→7）后怪 def 会高于玩家进层
         # ATK -> unbreakable（正是「前期打不过」）；若压低 defW 反而能破防，
         # perHit 变薄、回合暴涨到 7，r=15% 连吸 6 次抽走九成血（9F 实测死局）。
-        # 前期（0-based floor < eliteBefore）由 scaledMon 套 eliteShift=9
+        # 前期（0-based floor < eliteBefore）由 scaledMon 套 eliteShift=7
         # 成为「打不过、后期回头打」的精英；12F 起回落到常规散怪池。
         {'id': 'm10', 'ch': DRAIN_CH, 'name': '噬血蝠', 'hp': 20, 'atk': 6, 'def': 2,
          'gold': 12, 'exp': 14, 'bg': '#c2185b',

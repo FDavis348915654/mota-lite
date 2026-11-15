@@ -255,7 +255,7 @@ export const MONSTERS = [
     "defW": 1.0,
     "drain": 0.15,
     "eliteBefore": 11,
-    "eliteShift": 9
+    "eliteShift": 7
   },
   {
     "id": "m9",

@@ -49,6 +49,9 @@ let playTimer = null, speed = 320, backup = null
 // 表现层状态
 let atlas = null, spriteMode = true, animOn = true, soundOn = true, vibOn = true
 let animating = false
+// v0.21.0：战斗动画 460ms 期间的移动输入（点格子 / 方向键）不再丢弃，
+// 排队到动画结束立即执行 —— 修掉「打完怪马上点别的格子没反应、像卡住」的体感。
+let inputQueue = [], inputPumpTimer = null
 // v0.6.0：点击格子移动 / 设置浮层状态
 // v0.16：点击寻路每步间隔 = 「移动一格的时间」；走到实体旁后等同样一拍再交互
 const AUTO_STEP_MS = 150
@@ -455,6 +458,8 @@ function dismissStory() {
   $('storyStatus').hidden = true
   storyOpen = false; currentStory = null
   showNextStory()
+  // v0.21.0：剧情看完后，若战斗动画期间排过移动输入，这里接着执行
+  pumpInputQueue()
 }
 function closeStory() {
   if (typeTimer) {
@@ -470,12 +475,40 @@ function closeStory() {
 }
 function flushStory() { if (!storyOpen && storyQueue.length && !animating) showNextStory() }
 
+// ---- v0.21.0：战斗动画期间的移动输入排队执行 ----
+// 旧行为：animating 时 walkTo / manualStep / keydown 直接 return，点击被整段丢弃，
+// 叠加 AUTO_STEP_MS 的节拍后体感约卡 1 秒。现在把输入暂存，动画一结束立即按序执行；
+// 保留 460ms 动画本身（视觉反馈），只去掉「动画期间不能操作」这层锁。
+function enqueueInput(item) {
+  if (inputQueue.length < 12) inputQueue.push(item)   // 防连点洪水
+}
+function clearInputQueue() {
+  inputQueue = []
+  if (inputPumpTimer) { clearTimeout(inputPumpTimer); inputPumpTimer = null }
+}
+function pumpInputQueue() {
+  // 动画中 / 模态浮层开着 / 已结束 / 回放中都不消费，队列留着等下一次触发
+  if (animating || !inputQueue.length) return
+  if (storyOpen || confirmOpen || settingsOpen || codexOpen || state.ended || replayMode) return
+  if (inputPumpTimer) { clearTimeout(inputPumpTimer); inputPumpTimer = null }
+  const item = inputQueue.shift()
+  if (item.kind === 'walk') walkTo(item.x, item.y)
+  else manualStep(item.dir)
+  // walkTo 一旦启动寻路，后续移动交给 autoTick，队列里的重复点击清空即可
+  if (autoTimer) { clearInputQueue(); return }
+  // 又打了一场（新动画）：剩余的等下一次动画结束回调继续
+  if (animating) return
+  // 否则按「走一格」的节拍逐个消费，避免连点瞬间窜出去好几格
+  if (inputQueue.length && !storyOpen && !confirmOpen && !settingsOpen && !codexOpen && !state.ended && !replayMode)
+    inputPumpTimer = setTimeout(pumpInputQueue, AUTO_STEP_MS)
+}
+
 // ---- 通用二次确认弹窗 ----
 // 刻意不用 window.confirm：无头浏览器会被原生 dialog 阻塞、样式不统一、也无法自动化断言。
 // 这里是屏幕内浮层 + 回调；confirmOpen 期间 manualStep / walkTo / swipe / doAction / 键盘游戏输入全部让位。
 function openConfirm(opt) {
   if (confirmOpen) return
-  pause(); stopAuto()
+  clearInputQueue(); pause(); stopAuto()
   if (settingsOpen) closeSettings()
   confirmAction = opt.onOk
   $('confirmTitle').textContent = opt.title
@@ -545,7 +578,11 @@ function shopActions() {
     })
   return [...goods, { label: TEXTS.ui.shopLeave, leave: true, run: () => {} }]
 }
-function openShop() {
+function openShop(firstTime = false) {
+  // v0.21.0：首次撞商店 = 把被怪物囚禁的商人救出来，先弹一段「感谢」剧情
+  // （once 去重、非 persistent，点「继续」即关）；剧情队列接着自动弹出下面的交易框。
+  // 点「购买」按钮 / 后续再撞商店都走 firstTime=false，只开交易，不重复道谢。
+  if (firstTime) queueStory('shop_free')
   // once=false：每次撞商店 / 点「购买」都弹；persistent：购买后不关、隐藏「继续」
   queueStory('shop', shopActions(), false, {
     persistent: true,
@@ -586,6 +623,9 @@ function step(dir) {
   const beforeFloor = before.floor
   // v0.13：法师 M 首次救出弹介绍，之后（撞之前就已救出）弹经验兑换界面
   const mageFreedBefore = !!(before.hero.flags & FLAG.MAGE_FREED)
+  // v0.21.0：首次撞商店 = 救出被怪物囚禁的商人，先弹「感谢」剧情再摆摊；
+  // 用 resolveStep 之前的 flags 判定，才分得清「首次」与「后续」。
+  const shopSeenBefore = !!(before.hero.flags & FLAG.SHOP_SEEN)
   const beforeCells = buildCells(before)
 
   const r = resolveStep(before, dir)
@@ -636,7 +676,7 @@ function step(dir) {
       else queueStory('fairy_intro')
     }
     if (beforeTile === 'C' && progressed) queueStory('core_hint')
-    if (beforeTile === 'N' && progressed) openShop()
+    if (beforeTile === 'N' && progressed) openShop(!shopSeenBefore)
     if (beforeTile === 'M' && progressed) {
       if (mageFreedBefore) openMage()
       else queueStory('mage_free')
@@ -662,6 +702,8 @@ function step(dir) {
     setTimeout(() => {
       animating = false; hideBattleFx()
       render(); renderHistory(); renderReplayUI(); flushStory()
+      // v0.21.0：动画一结束立刻执行排队输入，玩家不必再等、也不必重新点一次
+      pumpInputQueue()
     }, 460)
   } else {
     render(); renderHistory(); renderReplayUI(); flushStory()
@@ -778,7 +820,7 @@ function play() {
 function startReplay() {
   const sol = findSolution()
   if (!sol) { log('未找到通关路线，请先跑 node tools/validate_logic.mjs 检查配置表。'); return }
-  pause(); dismissStory(); stopAuto()
+  clearInputQueue(); pause(); dismissStory(); stopAuto()
   settingsOpen = false; $('settingsLayer').hidden = true
   codexOpen = false; $('codexLayer').hidden = true
   if (!backup) backup = { save: serialize(state), steps, tip: tipEl.textContent, history: history.slice() }
@@ -791,7 +833,7 @@ function startReplay() {
   log('策略规划 ' + sol.rounds + ' 轮，生成 ' + route.length + ' 步通关路线。回放不写 localStorage，退出可恢复原进度。')
 }
 function exitReplay(restore) {
-  pause(); dismissStory()
+  clearInputQueue(); pause(); dismissStory()
   if (!replayMode) return
   replayMode = false
   if (restore && backup) {
@@ -803,7 +845,7 @@ function exitReplay(restore) {
   render(); renderHistory(); renderReplayUI()
 }
 function restart() {
-  pause(); dismissStory(); stopAuto()
+  clearInputQueue(); pause(); dismissStory(); stopAuto()
   settingsOpen = false; $('settingsLayer').hidden = true
   codexOpen = false; $('codexLayer').hidden = true
   replayMode = false; route = []; snapshots = []; cursor = 0; backup = null
@@ -944,7 +986,7 @@ function autoTick() {
   }
 }
 function applyImport(s, text) {
-  pause(); dismissStory(); stopAuto()
+  clearInputQueue(); pause(); dismissStory(); stopAuto()
   settingsOpen = false; $('settingsLayer').hidden = true
   codexOpen = false; $('codexLayer').hidden = true
   replayMode = false; route = []; snapshots = []; cursor = 0; backup = null
@@ -1000,7 +1042,12 @@ document.addEventListener('keydown', e => {
     if (k === 'Enter' || k === ' ' || k === 'Spacebar' || k === 'Escape') { e.preventDefault(); closeStory() }
     return
   }
-  if (animating) return
+  // v0.21.0：战斗动画期间方向键同样排队（其余命令键仍让位），动画结束立即走
+  if (animating) {
+    const aq = KEYMAP[k]
+    if (aq) { e.preventDefault(); enqueueInput({ kind: 'dir', dir: aq }) }
+    return
+  }
   if (k === 'Escape') { e.preventDefault(); if (replayMode) exitReplay(true); return }
   if (k === ' ' || k === 'Spacebar') { e.preventDefault(); play(); return }
   if (k === '[') { e.preventDefault(); pause(); goto(cursor - 1); return }
@@ -1022,7 +1069,10 @@ gridEl.addEventListener('click', e => {
   const box = e.target.closest('.cell'); if (!box) return
   const i = Number(box.dataset.i)
   const W = FLOORS[state.floor].rows[0].length
-  walkTo(i % W, Math.floor(i / W))
+  const x = i % W, y = Math.floor(i / W)
+  // v0.21.0：战斗动画期间的点击不再丢弃，排队到动画结束立即执行
+  if (animating) { enqueueInput({ kind: 'walk', x, y }); return }
+  walkTo(x, y)
 })
 $('overBtn').addEventListener('click', requestNewGame)
 $('btnReplay').addEventListener('click', startReplay)

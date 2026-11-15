@@ -46,9 +46,8 @@ import {
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
 export function scaledMon(mon, floor, hero) {
   if (!mon) return mon
-  // v0.20.1：noScale（魔王）也统一 ×DEF_GAIN，保证「所有怪物」口径一致；
-  // 魔王 W 在 resolveStep 里走到即通关、不参与战斗结算，def 只是图鉴展示值。
-  if (mon.noScale) return { ...mon, def: Math.round(mon.def * (CONFIG.DEF_GAIN || 1)) }
+  // v0.21.0：魔王 noScale 保持自身终局数值（走到即通关、不参与战斗结算），不参与小怪增益。
+  if (mon.noScale) return mon
   const fl = floor == null ? 0 : floor
   // v0.19：吸血怪前期精英化 —— 低层套超前层 FLOOR_SCALE，成为
   // 「打不过、后期成长起来再回头打」的强敌；到 eliteBefore 层起
@@ -72,12 +71,32 @@ export function scaledMon(mon, floor, hero) {
   const shielded = !!(BARRIER && hero && fl >= BARRIER.floor && !isElite &&
                       !((hero.flags || 0) & FLAG.FAY_CHARGED))
   const mul = shielded ? BARRIER.boost : { hp: 1, atk: 1, def: 1 }
+  const defW = mon.defW == null ? 1 : mon.defW
+  const baseAtk = s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk
+  const baseDef = s.def * defW * mul.def
+  // v0.21.0：常规小怪 = 非精英(含吸血蝠前期精英形态)、非吸血蝠(单独削弱)、
+  // 且 defW < 1.2（守门石头人除外）。精英 X / 魔王 / 守门石头人保持 v0.20.0 基线不动。
+  const isCommon = !isElite && defW < 1.2 && !mon.drain
+  let atk = Math.max(1, Math.round(baseAtk))
+  let def = Math.max(0, Math.round(baseDef))
+  let hpScale = 1
+  if (isCommon) {
+    atk = Math.max(1, Math.round(baseAtk * (CONFIG.MOB_ATK_GAIN || 1)))
+    const gained = Math.round(baseDef * (CONFIG.MOB_DEF_GAIN || 1))
+    // 破防保底：+50% 防御会把 defW≥1.03 的怪顶过玩家建模 ATK（perHit≤0 死局），
+    // 故钳到「标准怪防 s.def × CAP」，保证建模路线 perHit>0。
+    const cap = Math.round(s.def * (CONFIG.MOB_DEF_CAP_MULT || 1))
+    def = Math.max(0, Math.min(gained, cap))
+    // 回合数守恒：怪防抬高压缩 perHit，若 hp 不动则回合数翻倍 → 反击累积 lethal。
+    // 按楼层分前/后段缩放 hp 把单场总损血拉回基线（生成链 hp=(R-1)·perHit+1 的同一建模）。
+    hpScale = fl < 11 ? (CONFIG.MOB_HP_SCALE_FRONT || 1) : (CONFIG.MOB_HP_SCALE_BACK || 1)
+  }
   return {
     ...mon,
     elite: isElite,
-    hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp)),
-    atk: Math.max(1, Math.round(s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk)),
-    def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW) * mul.def * (CONFIG.DEF_GAIN || 1)))
+    hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp * hpScale)),
+    atk,
+    def
   }
 }
 
@@ -87,9 +106,28 @@ export const CONFIG = {
   MIN_DAMAGE_1: false,  // 经典 50 层：ATK<=DEF 判「不可破防」；部分版本强制 1 点伤害
   CELL: 28,             // 格子边长 px（7 列 * 28 = 196，212 宽左右各留 8）
   SAFE_LR: 8,           // 胶囊圆角左右安全区
-  // v0.20.1：所有怪物防御统一增益（用户口径「不用考虑平衡」，按字面 ×1.2）。
-  // 原 VIBRATE_GAP 是 M1 遗留死配置（宿主层 pulse() 从未按它节流），一并移除。
-  DEF_GAIN: 1.2,
+  // v0.21.0：常规小怪攻防增益（用户「花光资源堆防后仍能防杀很多小怪，与设计初衷不符」）。
+  //   · 移除 v0.20.1 的 DEF_GAIN=1.2（那是「不用考虑平衡」的死局旋钮，实测 findSolution=null）。
+  //   · MOB_ATK_GAIN / MOB_DEF_GAIN 只作用常规小怪，排除魔王 / 精英 / 守门石头人(见 scaledMon)。
+  //   · MOB_DEF_CAP_MULT：+50% 防御会让 defW≥1.03 的怪 perHit≤0（破不了防死局），
+  //     故把增益后的 def 钳到「标准怪防 s.def × 该倍数」，保证建模路线 perHit>0、回合可控。
+  //     这是用户授权「移除死局配置并调校」里的破防保底，具体值由探针实测定标。
+  MOB_ATK_GAIN: 1.2,
+  MOB_DEF_GAIN: 1.5,
+  // 破防保底 CAP 与分段损血守恒：由 CAP×HP 网格叠加 4 条强化时机路径实测定标。
+  // CAP=1.15（CAP≥1.4 时任何 HP 缩放都死局）。只按单常数缩 HP 虽能保默认路线通关，
+  // 却会砍掉「延后到 19F / 20F 才强化」两条路径，或把前期损血削到基线以下。
+  // 分段 0.6/0.3 后：全程损血 14604≈基线 14571、前期损血 7563（基线 4955，+52%）、
+  // 4 条路径全通关且梯度健康、防杀率 54.5%→40.9%（见 CHANGELOG）。
+  MOB_DEF_CAP_MULT: 1.15,
+  // 怪防抬高会压薄 perHit、把回合数放大 → 反击次数翻倍 → lethal。
+  // 生成链 hp=(R-1)·perHit+1 本就是「锁定回合数」的建模，故增益常规小怪时
+  // 同步按系数缩放 hp，把单场总损血拉回基线。
+  // v0.21.0 分前/后段标定：前期(1F~11F)玩家 HP 余量足，保留较多怪 HP 让难度不退化；
+  // 后期(12F 起，尤其灌顶前后)余量薄，缩更多 HP 保住「延后到 19F/20F 才强化」的路径不被 lethal 切断。
+  // 两个值由 CAP × HP 网格叠加 4 条强化时机路径实测定标（见 CHANGELOG）。
+  MOB_HP_SCALE_FRONT: 0.6,
+  MOB_HP_SCALE_BACK: 0.3,
   SAVE_LIMIT: 4096,     // v3：21 层 13×15 大地图通关存档实测 1025B，留 4 倍余量
   HANDHELD_SAVE_LIMIT: 128, // 手环端 @system.storage 的参考上限，仅用于 UI 提示；移植时须恢复（spec 附 D）
   SHOP_COST: 20,        // 商店一次交易花费金币（经典 21 层魔塔固定价）

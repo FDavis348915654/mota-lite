@@ -402,10 +402,11 @@ ok('1F~16F 的 FLOOR_SCALE 与 v0.17 完全一致（表头未漂移）',
 // ---- v0.19 攻击吸血怪 / 前期精英化 / 守门怪强化：结构专项 ----
 ok('v0.20 meta.schema = 11 且 meta.curve.lossGain = 1.5',
   data.meta.schema === 11 && data.meta.curve.lossGain === 1.5)
-ok('v0.19 第 10 种怪 m10 噬血蝠字段（drain0.15 / eliteBefore11 / eliteShift9 / defW1.0 / hpW0.55）',
+ok('v0.21 第 10 种怪 m10 噬血蝠字段（drain0.15 / eliteBefore11 / eliteShift7 / defW1.0 / hpW0.55）',
   (() => { const m = data.monsters.find(x => x.ch === '9')
+    // v0.21.0：前期精英超前层数 9→7（前期削弱一点，1F~8F 仍打不过）
     return !!m && m.id === 'm10' && m.drain === 0.15 &&
-      m.eliteBefore === 11 && m.eliteShift === 9 && m.defW === 1.0 && m.hpW === 0.55 })())
+      m.eliteBefore === 11 && m.eliteShift === 7 && m.defW === 1.0 && m.hpW === 0.55 })())
 ok('v0.19 吸血怪 9 分布：1F~12F 每层 1 只、13F 起隔层 1 只、全塔 16 只',
   (() => {
     const dist = data.floors.map(f => f.rows.join('').split('9').length - 1)

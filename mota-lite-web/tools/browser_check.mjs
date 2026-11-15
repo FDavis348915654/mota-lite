@@ -515,6 +515,18 @@ try {
   check('v0.13 「购买」按钮开局隐藏（未遇商店）',
     await ev("document.querySelector('#btnActShop').classList.contains('act-locked') && document.querySelector('#btnShop').classList.contains('act-locked')"))
   await cellClick(sp.sy * MAP.W + sp.sx)
+  // v0.21.0：首次撞商店 = 救出被怪物囚禁的商人，先弹「感谢」剧情（普通剧情、显示继续、无商品按钮）。
+  // 等打字机把全文打完再点一次「继续」，剧情队列自动接上常驻交易框；点早了只会补全正文、不关闭。
+  const freeReady = await waitFor("(async()=>{const T=await import('./texts.js');const t=document.querySelector('#storyTitle'),b=document.querySelector('#storyBody');return !!t&&t.textContent.includes('救出')&&!!b&&b.textContent===T.TEXTS.story.shop_free.body})()", 15000)
+  check('v0.21.0 剧情：首次撞商店先弹「救出流浪商人」感谢剧情（而非直接交易）',
+    freeReady, await txt('#storyTitle'))
+  check('v0.21.0 剧情：感谢文案写明被怪物囚禁 / 先道谢 / 顺路救出众人',
+    /怪物把我关在这儿/.test(await txt('#storyBody')) &&
+    /这份谢我得先说/.test(await txt('#storyBody')) &&
+    /正把这些人一个个放出来/.test(await txt('#storyBody')))
+  check('v0.21.0 剧情：感谢段是普通剧情（显示「继续」、无商品按钮）',
+    await ev("document.querySelector('#storyContinue').hidden === false && document.querySelectorAll('#storyActions button').length === 0"))
+  await click('#storyContinue')
   const shopOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===5})()", 10000)
   check('v0.13 点商人弹常驻交易框（4 商品 + 离开 = 5 个动作）', shopOpen, await txt('#storyTitle'))
   // v0.13.1：打字机逐字期间卡片 / 商品按钮坐标必须恒定，否则 flex 居中会把按钮往下推、误选商品
@@ -814,8 +826,9 @@ try {
   check('刷新后设置浮层文案同步', (await txt('#setSound')).includes('静音'), await txt('#setSound'))
   check('刷新不污染游戏存档串（设置独立 key）',
     (await ev("localStorage.getItem('mota_lite_web_v1')")) === saveBeforeReload)
-  check('冷启动不会凭空产生设置 key 之外的存档字段',
-    await ev(`(()=>{const o=JSON.parse(localStorage.getItem('${SETK}'));return Object.keys(o).sort().join(',')==='anim,sound,speed,sprite,zoom'})()`))
+  // v0.20.1 新增振屏开关 vib，设置项由 5 个变 6 个（之前未跑全套，此断言一直未同步）
+  check('冷启动不会凭空产生设置 key 之外的存档字段（含 v0.20.1 振屏开关 vib）',
+    await ev(`(()=>{const o=JSON.parse(localStorage.getItem('${SETK}'));return Object.keys(o).sort().join(',')==='anim,sound,speed,sprite,vib,zoom'})()`))
 
   // ---- v0.10 门阻挡：运行期推导坐标 + 真实点击 ----
   const GATE = await ev(`(async()=>{
@@ -1004,7 +1017,9 @@ try {
 
   // ---- v0.12 商店第四项：真实点「黄钥匙」 ----
   const SP2 = MAP.shop
-  await setVal('#saveInput', `4|${SP2.floor},${SP2.x},${SP2.y},200,10,10,20,0,0,0,0,0,0,0,0,0||${SP2.floor}`); await accept('#btnImport')
+  // v0.21.0：本段测「商店第四项黄钥匙」，玩家按语义已见过商人，故存档带 SHOP_SEEN(flags=1)，
+  // 不重弹首次感谢剧情（首次感谢由前一段 v0.21.0 剧情专项验证）。
+  await setVal('#saveInput', `4|${SP2.floor},${SP2.x},${SP2.y},200,10,10,20,0,0,0,0,0,0,0,0,1||${SP2.floor}`); await accept('#btnImport')
   await cellClick(SP2.sy * MAP.W + SP2.sx)
   const keyShopOpen = await waitFor("(()=>{const l=document.querySelector('#storyLayer');return l&&!l.hidden&&document.querySelectorAll('#storyActions button').length===5})()", 10000)
   check('v0.13 商店弹层 5 个动作（四商品 + 离开，炸弹未解锁）', keyShopOpen)
@@ -1713,7 +1728,7 @@ try {
     /软门槛/.test(helpRule17) && /各 \+40%/.test(helpRule17),
     'len=' + (helpRule17 ? helpRule17.length : 0))
   const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
-  check('v0.20 版本：标题徽章显示 v0.20.1', /v0\.20\.1/.test(titleV17), titleV17)
+  check('v0.20 版本：标题徽章显示 v0.21.0', /v0\.21\.0/.test(titleV17), titleV17)
 
   // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
   const P17 = await ev(`(async()=>{
@@ -1797,8 +1812,8 @@ try {
   check('v0.20 任务链：完全不强化 noCharge 不再保证通关（用户本次明确澄清）',
     !V18.none || !V18.none.ok)
   check('v0.18 任务链：任务格 13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e', V18.taskGrid)
-  check('v0.20 任务链：版本 v0.20.1 / meta.schema=11',
-    V18.version==='v0.20.1' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
+  check('v0.20 任务链：版本 v0.21.0 / meta.schema=11',
+    V18.version==='v0.21.0' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
 
 
   // ---- v0.19 攻击吸血怪 / 前期精英化 / 后期普通怪 / 守门怪强化 专项端到端 ----
@@ -1828,7 +1843,7 @@ try {
       save: hi2.hpCost-lo.hpCost===k*Math.round(400*0.15),
       eliteEarly: early.reason==='unbreakable' && late.ok,
       eliteSwitch: e11.elite===true && n12.elite===false && e11.def>n12.def,
-      drainField: dm.drain===0.15 && dm.eliteBefore===11 && dm.eliteShift===9 && dm.defW===1.0,
+      drainField: dm.drain===0.15 && dm.eliteBefore===11 && dm.eliteShift===7 && dm.defW===1.0,
       frames: Object.keys(atlas.frames).length===47 && !!atlas.frames.drain && atlas.tileMap['9']==='drain',
       grid: dist.slice(0,12).every(n=>n===1) &&
             [13,15,17,19,21].every(f=>dist[f-1]===0) &&
@@ -1837,7 +1852,7 @@ try {
       potion: ps.effect.hp===100 && pl.effect.hp===400,
       guard: t.MONSTERS.find(m=>m.ch==='6').hpW===1.5 && t.MONSTERS.find(m=>m.ch==='X').hpW===1.0,
       schema: cfg.meta.schema===11 && cfg.meta.curve.lossGain===1.5,
-      version: (await import('./version.js')).VERSION==='v0.20.1'
+      version: (await import('./version.js')).VERSION==='v0.21.0'
     };
   })()`)
   check('v0.19 吸血怪：普伤为 0 时仍按当前 HP 15% 吸血（hpCost = k×吸血）', V19.noBreak,
@@ -1846,12 +1861,12 @@ try {
   check('v0.19 吸血怪：先打怪再捡血瓶省 k×15%×Δ（Δ=400 → 省 120 HP）', V19.save, '420-300=120')
   check('v0.19 前期精英打不过 / 终局成长后回头可打', V19.eliteEarly, '1F unbreakable → 终局 ok')
   check('v0.19 11F 仍精英、12F 回落普通怪（def 143 → 81）', V19.eliteSwitch, '143 → 81')
-  check('v0.19 m10 字段 drain0.15 / eliteBefore11 / eliteShift9 / defW1.0', V19.drainField)
+  check('v0.21 m10 字段 drain0.15 / eliteBefore11 / eliteShift7 / defW1.0', V19.drainField)
   check('v0.19 资源 47 帧含 drain、9 → drain 映射', V19.frames)
   check('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）', V19.grid)
   check('v0.19 血瓶 ×2 HP 供给（100 / 400）', V19.potion)
   check('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0', V19.guard)
-  check('v0.20 版本 v0.20.1 / schema11 / lossGain1.5', V19.schema && V19.version)
+  check('v0.20 版本 v0.21.0 / schema11 / lossGain1.5', V19.schema && V19.version)
 
 
   // ---- v0.20 前期防杀抑制：端到端回放 + 帮助弹层口径 ----
@@ -1878,7 +1893,7 @@ try {
       atk11:[29,61,55,70,99,110,112,120,134,150,158].every((v,i)=>fs[i].atk===v),
       tail:fs.slice(11,21).every((v,i,a)=>i===0||v.atk>=a[i-1].atk),
       schema:(await (await fetch('./levels/levels.json')).json()).meta.schema===11,
-      version:(await import('./version.js')).VERSION==='v0.20.1'
+      version:(await import('./version.js')).VERSION==='v0.21.0'
     };
   })()`)
   check('v0.20 前期防杀消除：正式回放 1F~11F 常规怪零伤率 0%', V20.zero===0 && V20.n>0,
@@ -1887,13 +1902,106 @@ try {
     String(V20.earlyLoss))
   check('v0.20 默认回放仍通关且 3410 步', V20.win && V20.steps===3410)
   check('v0.20 前 11 组 ATK 定稿值 + 12F 起不回落', V20.atk11 && V20.tail)
-  check('v0.20 版本 v0.20.1 / meta.schema=11', V20.version && V20.schema)
+  check('v0.20 版本 v0.21.0 / meta.schema=11', V20.version && V20.schema)
   const helpRule20 = await ev("document.querySelector('#helpRule').textContent")
   check('v0.20 文案：帮助弹层渲染出防杀消除 / 合理利用金币经验',
     /防杀/.test(helpRule20) && /合理利用手上的金币与经验/.test(helpRule20),
     'len=' + (helpRule20 ? helpRule20.length : 0))
   check('v0.20 文案：帮助弹层不再宣称「不回去强化也能硬扛到塔顶」',
     !/不回去强化也能硬扛到塔顶/.test(helpRule20))
+
+  // ---- v0.21.0 数值 / 剧情口径：真实浏览器里 import 真模块现算 ----
+  const V21 = await ev(`(async()=>{
+    const l=await import('./logic.js'), t=await import('./tables.js'), sv=await import('./solver.js'), T=await import('./texts.js');
+    const C=l.CONFIG, keys=['MOB_ATK_GAIN','MOB_DEF_GAIN','MOB_DEF_CAP_MULT','MOB_HP_SCALE_FRONT','MOB_HP_SCALE_BACK'];
+    const save=keys.map(k=>C[k]);
+    keys.forEach(k=>{C[k]=({MOB_ATK_GAIN:1,MOB_DEF_GAIN:1,MOB_DEF_CAP_MULT:99,MOB_HP_SCALE_FRONT:1,MOB_HP_SCALE_BACK:1})[k]});
+    const b=l.scaledMon(t.monsterByCh('1'),0,null);
+    save.forEach((v,i)=>{C[keys[i]]=v});
+    const n=l.scaledMon(t.monsterByCh('1'),0,null);
+    const boss=t.MONSTERS.find(m=>m.noScale);
+    const sol=sv.findSolution();
+    let rich=l.newGame(), buys=0;
+    if(sol) for(const d of sol.steps){
+      rich=l.resolveStep(rich,d).state;
+      let g=0; while(rich.hero.gold>=20&&g++<20){const before=rich.hero.gold;rich=l.shopBuy(rich,'def').state;if(rich.hero.gold===before)break;buys++}
+      if(rich.ended)break;
+    }
+    const s=T.TEXTS.story, i=T.TEXTS.itemDesc;
+    return {
+      cfg:C.MOB_ATK_GAIN===1.2&&C.MOB_DEF_GAIN===1.5&&C.MOB_DEF_CAP_MULT===1.15&&
+          C.MOB_HP_SCALE_FRONT===0.6&&C.MOB_HP_SCALE_BACK===0.3&&!('DEF_GAIN' in C),
+      atkGain:n.atk>=Math.round(b.atk*1.2)-1&&n.atk<=Math.round(b.atk*1.2)+1,
+      defCap:n.def<=Math.round(t.FLOOR_SCALE[0].def*1.15)+1&&n.def>=b.def,
+      hpScale:n.hp>=Math.round(b.hp*0.6)-1&&n.hp<=Math.round(b.hp*0.6)+1,
+      bossIntact:!!boss&&l.scaledMon(boss,0,null).atk===boss.atk,
+      shift7:t.monsterByCh('9').eliteShift===7,
+      solWin:!!sol&&sol.state.ended==='win'&&sol.steps.length===3410,
+      richWin:rich.ended==='win'&&rich.hero.def>1000, buys,
+      story:!!s.shop_free&&/怪物把我锁进这法阵/.test(s.mage_free.body)&&
+            /怪物把我扔进来关了三天/.test(s.thief_free.body)&&
+            /怪物把我看在这儿太久/.test(s.elder.body)&&
+            /这一路救出来的，不止是公主/.test(s.win.body)&&
+            /被怪物囚禁/.test(i.npc_mage)&&/被怪物囚禁/.test(i.npc_thief)&&/被怪物囚禁/.test(i.npc_elder),
+      version:(await import('./version.js')).VERSION==='v0.21.0'
+    };
+  })()`)
+  check('v0.21.0 数值：CONFIG 增益 1.2/1.5/1.15 + 分段 HP 0.6/0.3，DEF_GAIN 已移除', V21.cfg)
+  check('v0.21.0 数值：1F 常规小怪 ATK×1.2 / DEF 被 CAP 钳住 / HP 前段×0.6',
+    V21.atkGain && V21.defCap && V21.hpScale)
+  check('v0.21.0 数值：魔王 noScale 不吃增益 / 吸血蝠 eliteShift=7', V21.bossIntact && V21.shift7)
+  check('v0.21.0 数值：真实浏览器 findSolution 恢复通关（3410 步）', V21.solWin)
+  check('v0.21.0 数值：花光资源 build（金币全买防）仍通关且 DEF>1000', V21.richWin,
+    '买防 ' + V21.buys + ' 次')
+  check('v0.21.0 剧情：法师 / 盗贼 / 老者 / 结局 / 图例统一「被怪物囚禁 · 顺路救出」', V21.story)
+  check('v0.21.0 版本 v0.21.0', V21.version)
+
+  // ---- v0.21.0 操作手感：战斗动画期间点击排队，动画结束立即继续移动 ----
+  const FEEL = await ev(`(async()=>{
+    const t=await import('./tables.js');
+    const rows=t.FLOORS[0].rows, W=rows[0].length, H=rows.length;
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      const m=t.monsterByCh(rows[y][x]);
+      if(!m||m.elite||m.drain||m.noScale) continue;
+      for(const d of [[0,1],[0,-1],[1,0],[-1,0]]){
+        const hx=x+d[0], hy=y+d[1];
+        if(hx<0||hy<0||hx>=W||hy>=H) continue;
+        const hc=rows[hy][hx]; if(hc!=='.'&&hc!=='@') continue;
+        for(const d2 of [[0,1],[0,-1],[1,0],[-1,0]]){
+          const tx=hx+d2[0], ty=hy+d2[1];
+          if(tx===x&&ty===y) continue;
+          if(tx<0||ty<0||tx>=W||ty>=H) continue;
+          const tc=rows[ty][tx]; if(tc!=='.'&&tc!=='@') continue;
+          return {hx,hy,tx,ty,monIdx:y*W+x,targetIdx:ty*W+tx};
+        }
+      }
+    }
+    return null;
+  })()`)
+  check('v0.21.0 手感：定位到 1F 常规怪 + 英雄可站格 + 排队目标空格', !!FEEL,
+    FEEL ? JSON.stringify(FEEL) : 'null')
+  if (FEEL) {
+    // 战斗动画必须开启（排队机制的前提）；前面段落切过两次已回原值，这里兜底保证
+    if (!await ev("document.querySelector('#btnAnim').classList.contains('on')")) await click('#btnAnim')
+    check('v0.21.0 手感：战斗动画保持开启',
+      await ev("document.querySelector('#btnAnim').classList.contains('on')"))
+    // 清掉可能残留的剧情 / 交易浮层，保证导入后弹层时序干净
+    await ev("(()=>{const l=document.querySelector('#storyLayer');if(l&&!l.hidden){const c=document.querySelector('#storyContinue');if(c)c.click();const b=document.querySelector('#storyActions button.story-leave');if(b)b.click()}})()")
+    await setVal('#saveInput', `4|0,${FEEL.hx},${FEEL.hy},9999,9999,9999,0,0,0,0,0,0,0,0,0,0||0`)
+    await accept('#btnImport')
+    const posBefore = await txt('#iPos')
+    await cellClick(FEEL.monIdx)       // 打怪胜利 -> animating=true 460ms
+    await cellClick(FEEL.targetIdx)    // 动画期间点击：旧行为整段丢弃，新版排队
+    const won21 = await waitFor("document.querySelector('#tip').textContent.includes('胜 ')", 8000)
+    check('v0.21.0 手感：点击怪物触发战斗胜利', won21, await txt('#tip'))
+    await sleep(800)
+    const posAfter = await txt('#iPos')
+    check('v0.21.0 手感：动画期间点击不再卡住，动画结束立即继续移动',
+      posAfter !== posBefore, posBefore + ' -> ' + posAfter)
+    check('v0.21.0 手感：排队点击把英雄送到目标格',
+      posAfter.includes('(' + FEEL.tx + ',' + FEEL.ty + ')'), posAfter)
+  }
+
   check('全程零 JS 异常', jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '))
 } catch (e) {
   check('脚本执行未抛错', false, e.message)

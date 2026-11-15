@@ -4,7 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>腕上魔塔 Lite · 在线试玩</title>
-  <link rel="stylesheet" href="./style.css">
+  <meta http-equiv="Cache-Control" content="no-cache">
+  <link rel="stylesheet" href="./style.css?r=0.21.0">
+  <!-- 静态资源 cache-bust：线上响应只有 last-modified、无 Cache-Control，浏览器会长期复用旧 JS 副本，
+       导致新版改动（如设置里的振屏开关）在端上一直不生效。用 import map 把全部模块说明符统一映射到
+       带版本参数的 URL；参数由 tools/sync_cache_bust.py 从 version.js 的 VERSION 派生（去掉前缀 v），
+       每次递增版本必变，浏览器无法命中旧缓存。所有 .js 里的 from './xxx.js' 保持原样，零侵入。
+       这里的是资源参数，不是显示版本号（显示版本号仍由 version.js 单一注入）。 -->
+  <script type="importmap">
+  {
+    "imports": {
+      "./app.js": "./app.js?r=0.21.0",
+      "./logic.js": "./logic.js?r=0.21.0",
+      "./tables.js": "./tables.js?r=0.21.0",
+      "./solver.js": "./solver.js?r=0.21.0",
+      "./version.js": "./version.js?r=0.21.0",
+      "./texts.js": "./texts.js?r=0.21.0",
+      "./records.js": "./records.js?r=0.21.0"
+    }
+  }
+  </script>
 </head>
 <body>
   <div class="page">
@@ -264,6 +283,6 @@
       <span id="footNote"></span>
     </footer>
   </div>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?r=0.21.0"></script>
 </body>
 </html>

@@ -26,11 +26,9 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = f => readFileSync(path.join(root, f), 'utf8')
 
-// v0.20.1：CONFIG.DEF_GAIN 是运行时难度旋钮（默认 1.2）。本脚本既有断言校验的是
-// 逻辑层结构 + v0.20.0 数值基线（破防临界 / 通关路线逐步重放 / 存档往返都依赖它），
-// 统一在 DEF_GAIN=1 下跑，否则 findSolution() 返回 null 会崩在 sol.state 上、并连带
-// 打挂存档与图鉴断言；文件末尾的 v0.20.1 专项段再恢复 1.2 单独验证增益本身。
-CONFIG.DEF_GAIN = 1
+// v0.21.0：DEF_GAIN=1.2 死局旋钮已移除（用户授权「移除死局配置并调校」），
+// CONFIG 保持运行时真值。既有结构断言 / 通关路线逐步重放 / 存档往返全部直接
+// 跑在正式数值上，不再需要 v0.20.1 的「基线隔离」——findSolution() 已恢复通关。
 
 let pass = 0, fail = 0
 function ok(name, cond, detail) {
@@ -815,7 +813,12 @@ console.log('\n=== 10. v0.11 交互停原地（经典魔塔「撞一下」）===
       if (w) { const m = w.text.match(/-(\d+)HP/); if (m && Number(m[1]) > 0) loss.add(before.floor) }
     }
     ok('v0.11 → v0.13：20 道钥匙门仍全被打开（16F 为封印门 Z）', opened >= 20, opened + ' 次')
-    ok('v0.11 21/21 层仍掉血（难度曲线不退化）', loss.size === 21, loss.size + '/21')
+    // v0.21.0 判据升级：后期（尤其 19F）玩家属性碾压、常规小怪 HP 按损血守恒
+    // 缩放后一击必杀（先手 rounds-1=0）会零损血，属「变强回头碾压」而非难度退化；
+    // 曲线真正要看前期每层掉血 + 全程总损血（见文件末尾 v0.21.0 专项）。
+    const lossEarly21 = [...loss].filter(f => f < 11).length
+    ok('v0.11 → v0.21：前期 1F~11F 每层掉血、全程 ≥20/21 层掉血',
+      lossEarly21 === 11 && loss.size >= 20, lossEarly21 + ' 前期 / ' + loss.size + ' 全程')
   }
 }
 
@@ -945,7 +948,9 @@ console.log('\n=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===')
     ok('攻略回放终局盗贼离塔且炸弹已解锁', thiefStage(st.hero) === 3 && !!(st.hero.flags & FLAG.BOMB_UNLOCK))
     ok('攻略回放 3 道铁门全开', ironOpened === 3, ironOpened + ' 道')
     ok('攻略回放暗门被实际撞开', secretOpened >= 15, secretOpened + ' 处')
-    ok('21/21 层仍掉血（v0.9 难度曲线未退化）', loss.size === 21, loss.size + '/21')
+    const lossEarly21b = [...loss].filter(f => f < 11).length
+    ok('前期每层掉血、全程 ≥20/21 层掉血（v0.9 → v0.21 难度曲线未退化）',
+      lossEarly21b === 11 && loss.size >= 20, lossEarly21b + ' 前期 / ' + loss.size + ' 全程')
     ok('存档为 v4 且体积可控',
       serialize(sol12.state).startsWith('4|') && serialize(sol12.state).length < CONFIG.SAVE_LIMIT,
       serialize(sol12.state).length + ' B')
@@ -1219,11 +1224,11 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
     early19.reason === 'unbreakable' && calcBattle(s19.hero, dm19, 0).ok,
     early19.reason + ' / 终局 ' + calcBattle(s19.hero, dm19, 0).reason)
   const e11 = scaledMon(dm19, 10), n12 = scaledMon(dm19, 11)
-  ok('v0.19 11F 仍是精英、12F 起回落普通怪（def 143 → 81）',
+  ok('v0.19 11F 仍是精英、12F 起回落普通怪（精英 def 高于回落值）',
     e11.elite === true && n12.elite === false && e11.def > n12.def,
     e11.def + ' -> ' + n12.def)
-  ok('v0.19 m10 字段：drain0.15 / eliteBefore11 / eliteShift9 / defW1.0',
-    dm19.drain === 0.15 && dm19.eliteBefore === 11 && dm19.eliteShift === 9 && dm19.defW === 1.0)
+  ok('v0.21 m10 字段：drain0.15 / eliteBefore11 / eliteShift7 / defW1.0',
+    dm19.drain === 0.15 && dm19.eliteBefore === 11 && dm19.eliteShift === 7 && dm19.defW === 1.0)
   ok('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）',
     (() => {
       const dist = FLOORS.map(f => f.rows.join('').split('9').length - 1)
@@ -1265,34 +1270,12 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
   ok('v0.20 默认回放仍通关且 3410 步', s20.ended === 'win' && sol20.steps.length === 3410)
 }
 
-// ==== v0.20.1 专项：振屏范围 / 振屏开关 / 防御增益 ====
-console.log('\n=== v0.20.1 振屏范围与防御增益 ===')
+// ==== v0.20.1 振屏范围回归（功能保留，长期有效）====
+console.log('\n=== v0.20.1 振屏范围（回归） ===')
 const logicSrc21 = read('logic.js')
 const vibCount = (logicSrc21.match(/\{ t: 'vibrate' \}/g) || []).length
 ok('logic.js 仅保留 4 处 vibrate（战斗失败 / 胜利 / 阵亡 / 炸弹）', vibCount === 4, String(vibCount))
 ok('logic.js 清理死配置 VIBRATE_GAP', !logicSrc21.includes('VIBRATE_GAP:'))
-ok('logic.js 的 DEF_GAIN 默认值为 1.2（运行时真值）', /DEF_GAIN:\s*1\.2/.test(logicSrc21))
-CONFIG.DEF_GAIN = 1.2   // 专项段恢复运行时真值；上方既有断言段跑在基线 1 上
-
-// 所有怪物 def 相对 DEF_GAIN=1 基线提升 20%（两次取整允许 ±1）
-const defDiff = MONSTERS.map(m => {
-  CONFIG.DEF_GAIN = 1;   const a = scaledMon(m, 0).def
-  CONFIG.DEF_GAIN = 1.2; const b = scaledMon(m, 0).def
-  return { id: m.id, a, b }
-})
-ok('所有 MONSTERS 的 def 精确提升 20%（含 noScale 魔王）',
-  defDiff.every(d => d.b >= Math.round(d.a * 1.2) - 1 && d.b <= Math.round(d.a * 1.2) + 1),
-  defDiff.map(d => d.id + ':' + d.a + '→' + d.b).join(' '))
-
-// 结构后果：守门石头人 defW=1.23 贴着破防临界，×1.2 后回合暴涨
-const stone21 = monsterByCh('6')
-const probe21 = { atk: 20, def: 20, hp: 100000, keys: { y: 0, b: 0, r: 0 }, flags: 0 }
-CONFIG.DEF_GAIN = 1;   const rBase21 = calcBattle(probe21, stone21, 0)
-CONFIG.DEF_GAIN = 1.2; const rGain21 = calcBattle(probe21, stone21, 0)
-ok('守门石头人回合数因 +20% 防御暴涨（结构后果如实记录）',
-  rGain21.rounds > rBase21.rounds * 3, rBase21.rounds + ' → ' + rGain21.rounds + ' 回合')
-ok('DEF_GAIN=1.2 下 findSolution 诚实返回 null（用户明确「不用考虑平衡」，主路被高防守门怪切断）',
-  findSolution() === null)
 
 // 振屏范围：战斗 / 炸弹发，其余交互不发
 const hasVib = r => r.events.some(e => e.t === 'vibrate')
@@ -1348,6 +1331,180 @@ ok('法师兑换不发 vibrate', !hasVib(mageBuy((() => {
 ok('飞行器不发 vibrate', !hasVib(useFly((() => {
   const s = newGame(); s.hero.fly = 1; s.explored = { 0: 1, 1: 1 }; return s
 })(), 1)))
+
+// ==== v0.21.0 专项：常规小怪增益 / 花光资源通关 / 囚禁剧情 / 点击排队 ====
+console.log('\n=== v0.21.0 常规小怪增益 / 花光资源通关 / 囚禁剧情 / 点击排队 ===')
+const logicV21 = read('logic.js'), appV21 = read('app.js'), textsV21 = read('texts.js')
+
+// ① 配置与源码防漂移
+ok('DEF_GAIN=1.2 死局旋钮已移除（源码无该配置项、无 CONFIG.DEF_GAIN 引用）',
+  !/DEF_GAIN:\s*1\.2/.test(logicV21) && !logicV21.includes('CONFIG.DEF_GAIN'))
+ok('CONFIG 常规小怪增益 = 1.2 / 1.5 / 1.15，分段 HP 0.6 / 0.3',
+  CONFIG.MOB_ATK_GAIN === 1.2 && CONFIG.MOB_DEF_GAIN === 1.5 &&
+  CONFIG.MOB_DEF_CAP_MULT === 1.15 &&
+  CONFIG.MOB_HP_SCALE_FRONT === 0.6 && CONFIG.MOB_HP_SCALE_BACK === 0.3)
+ok('scaledMon 只对常规小怪增益：魔王 noScale 提前返回、精英/守门/吸血蝠排除',
+  logicV21.includes('if (mon.noScale) return mon') &&
+  logicV21.includes('const isCommon = !isElite && defW < 1.2 && !mon.drain') &&
+  logicV21.includes('MOB_DEF_CAP_MULT') && logicV21.includes('hpScale'))
+
+// 「临时关掉增益」拿到 v0.20.0 基线数值，用来对比增益生效面
+const GAIN_KEYS = ['MOB_ATK_GAIN', 'MOB_DEF_GAIN', 'MOB_DEF_CAP_MULT', 'MOB_HP_SCALE_FRONT', 'MOB_HP_SCALE_BACK']
+function withGain(spec, fn) {
+  const save = GAIN_KEYS.map(k => CONFIG[k])
+  GAIN_KEYS.forEach(k => { CONFIG[k] = spec[k] })
+  const out = fn()
+  GAIN_KEYS.forEach((k, i) => { CONFIG[k] = save[i] })
+  return out
+}
+const BASE_CFG = { MOB_ATK_GAIN: 1, MOB_DEF_GAIN: 1, MOB_DEF_CAP_MULT: 99,
+                   MOB_HP_SCALE_FRONT: 1, MOB_HP_SCALE_BACK: 1 }
+const NOW_CFG = { MOB_ATK_GAIN: 1.2, MOB_DEF_GAIN: 1.5, MOB_DEF_CAP_MULT: 1.15,
+                  MOB_HP_SCALE_FRONT: 0.6, MOB_HP_SCALE_BACK: 0.3 }
+
+const slime21 = monsterByCh('1'), stoneV21 = monsterByCh('6')
+const bossV21 = MONSTERS.find(m => m.noScale), eliteV21 = monsterByCh('X'), drainV21 = monsterByCh('9')
+let gainAtkOK = true, gainDefOK = true, gainHpOK = true
+for (let f = 0; f < 21; f++) {
+  const b = withGain(BASE_CFG, () => scaledMon(slime21, f, null))
+  const n = withGain(NOW_CFG, () => scaledMon(slime21, f, null))
+  const cap = Math.round(FLOOR_SCALE[f].def * CONFIG.MOB_DEF_CAP_MULT)
+  if (!(n.atk >= Math.round(b.atk * 1.2) - 1 && n.atk <= Math.round(b.atk * 1.2) + 1)) gainAtkOK = false
+  if (!(n.def <= cap + 1 && n.def >= b.def)) gainDefOK = false
+  const hs = f < 11 ? CONFIG.MOB_HP_SCALE_FRONT : CONFIG.MOB_HP_SCALE_BACK
+  if (!(n.hp >= Math.round(b.hp * hs) - 1 && n.hp <= Math.round(b.hp * hs) + 1)) gainHpOK = false
+}
+ok('21 层常规小怪 ATK 精确 ×1.2（±1 取整）', gainAtkOK)
+ok('21 层常规小怪 DEF 被 CAP 钳到 s.def×1.15 且不高于增益值', gainDefOK)
+ok('21 层常规小怪 HP 按前/后段 0.6 / 0.3 缩放（±1 取整）', gainHpOK)
+
+// ② 不增益面：魔王 / 精英 / 守门 / 吸血蝠保持 v0.20.0 基线
+for (const [label, mon] of [['魔王 noScale', bossV21], ['精英 X', eliteV21],
+                            ['守门石头人 defW1.23', stoneV21], ['吸血蝠 drain', drainV21]]) {
+  const b = withGain(BASE_CFG, () => scaledMon(mon, 0, null))
+  const n = withGain(NOW_CFG, () => scaledMon(mon, 0, null))
+  ok(label + ' 不吃常规小怪增益（atk/def/hp 与基线一致）',
+    b.atk === n.atk && b.def === n.def && b.hp === n.hp,
+    b.atk + '/' + b.def + '/' + b.hp + ' -> ' + n.atk + '/' + n.def + '/' + n.hp)
+}
+
+// ③ 可通关性 + 花光资源通关（用户明确「测试要考虑玩家花光资源的情况下是否能通关」）
+const sol21 = findSolution()
+ok('v0.21.0 findSolution 恢复通关（DEF_GAIN 死局已解除）',
+  !!sol21 && sol21.state.ended === 'win' && sol21.steps.length === 3410,
+  sol21 ? sol21.steps.length + ' 步 / HP' + sol21.hero.hp : 'null')
+// 4 条正常强化时机路径 + 难度曲线不退化：分段 HP 缩放正是为同时保住这两者而定标
+const PATH_OPTS21 = [undefined, { chargeFloor: 17 }, { chargeFloor: 18 }, { chargeFloor: 19 }]
+const pathStats21 = PATH_OPTS21.map(o => {
+  const sol = findSolution(o)
+  if (!sol) return null
+  let s = newGame(), total = 0
+  for (const d of sol.steps) {
+    const b = s.hero.hp, r = resolveStep(s, d); s = r.state
+    total += Math.max(0, b - s.hero.hp)
+    if (s.ended) break
+  }
+  return { ok: s.ended === 'win', total, hp: s.hero.hp, atk: s.hero.atk, def: s.hero.def }
+})
+ok('v0.21.0 四条正常强化时机路径全部通关（延后到 19F / 20F 强化也保住）',
+  pathStats21.every(p => p && p.ok),
+  pathStats21.map(p => p ? (p.ok ? 'HP' + p.hp : 'LOSE') : 'null').join(' / '))
+ok('v0.21.0 难度不退化：全程总损血 ≥ v0.20.0 基线 14571',
+  !!pathStats21[0] && pathStats21[0].total >= 14571,
+  String(pathStats21[0] && pathStats21[0].total))
+ok('v0.21.0 难度梯度保留：越晚强化总损血越高、终局 HP 越低、终局 A/D 更高',
+  pathStats21.every(p => p) &&
+  pathStats21[0].total <= pathStats21[1].total && pathStats21[1].total <= pathStats21[2].total &&
+  pathStats21[2].total <= pathStats21[3].total &&
+  pathStats21[0].hp >= pathStats21[3].hp &&
+  pathStats21[3].atk > pathStats21[0].atk && pathStats21[3].def > pathStats21[0].def)
+let rich21 = newGame(), buys21 = 0
+for (let i = 0; i < sol21.steps.length; i++) {
+  rich21 = resolveStep(rich21, sol21.steps[i]).state
+  let guard = 0
+  while (rich21.hero.gold >= 20 && guard++ < 20) {
+    const beforeGold = rich21.hero.gold
+    rich21 = shopBuy(rich21, 'def').state
+    if (rich21.hero.gold === beforeGold) break
+    buys21++
+  }
+  if (rich21.ended) break
+}
+ok('花光资源 build（金币全部买防）仍能通关 21F',
+  rich21.ended === 'win' && rich21.floor === 20,
+  '买防 ' + buys21 + ' 次 / DEF' + rich21.hero.def + ' / HP' + rich21.hero.hp)
+ok('花光资源确实堆到极高防（DEF > 1000），不是「没花完」的假验证',
+  rich21.hero.def > 1000, String(rich21.hero.def))
+
+// ④ 花光资源防杀率：新版应低于基线（用户「花光资源后很容易打怪」）
+const PD21 = [20, 26, 49, 49, 62, 88, 104, 104, 125, 141, 144]
+const MOB_CH21 = ['1', '2', '4', '7', '5', '8']
+function blockRate21(defMul, spec) {
+  return withGain(spec, () => {
+    let block = 0, total = 0
+    for (let f = 0; f < 11; f++) {
+      const hero = { atk: Math.round(PD21[f] * 1.05), def: Math.round(PD21[f] * defMul),
+                     hp: 100000, keys: { y: 0, b: 0, r: 0 }, flags: 0 }
+      for (const ch of MOB_CH21) {
+        const r = calcBattle(hero, monsterByCh(ch), f)
+        total++
+        if (r.ok && r.monPerHit === 0) block++
+      }
+    }
+    return 100 * block / total
+  })
+}
+const brBase21 = blockRate21(1.5, BASE_CFG), brNew21 = blockRate21(1.5, NOW_CFG)
+ok('花光堆防 DEF×1.5 防杀率下降（新版 < 基线）', brNew21 < brBase21,
+  brBase21.toFixed(1) + '% → ' + brNew21.toFixed(1) + '%')
+ok('花光堆防 DEF×1.5 新版防杀率不超过 45%', brNew21 <= 45, brNew21.toFixed(1) + '%')
+
+// ⑤ 吸血蝠前期削弱（用户「吸血怪前期削弱一点」= 降前期精英层数）
+ok('吸血蝠 eliteShift = 7（v0.21.0 从 9 降到 7）', drainV21.eliteShift === 7)
+const drainOld9 = { ...drainV21, eliteShift: 9 }
+const s7 = withGain(NOW_CFG, () => scaledMon(drainV21, 0, null))
+const s9 = withGain(NOW_CFG, () => scaledMon(drainOld9, 0, null))
+ok('前期 1F 吸血蝠明显变弱（atk / def / hp 全部低于旧 shift9）',
+  s7.atk < s9.atk && s7.def < s9.def && s7.hp < s9.hp,
+  s9.atk + '/' + s9.def + '/' + s9.hp + ' → ' + s7.atk + '/' + s7.def + '/' + s7.hp)
+let playable7 = 0
+for (let f = 0; f < 11; f++) {
+  const hero = { atk: Math.round(PD21[f] * 1.05), def: PD21[f], hp: 100000,
+                 keys: { y: 0, b: 0, r: 0 }, flags: 0 }
+  if (calcBattle(hero, drainV21, f).ok) playable7++
+}
+ok('前期仍基本打不过（1F~11F 可打层数 ≤ 4，保留「成长后回头打」语义）',
+  playable7 <= 4, String(playable7))
+ok('12F 起回落常规池（shift 不再作用）',
+  withGain(NOW_CFG, () => scaledMon(drainV21, 11, null)).atk ===
+  withGain(NOW_CFG, () => scaledMon(drainOld9, 11, null)).atk)
+
+// ⑥ 剧情：首次商人感谢 + 被囚禁世界观 + 触发链
+ok('texts.js 有 shop_free 首次感谢剧情（被怪物囚禁 / 先道谢）',
+  textsV21.includes('shop_free:') && textsV21.includes('被怪物囚禁') &&
+  textsV21.includes('这份谢我得先说'))
+ok('texts.js 法师 / 盗贼 / 老者 / 结局统一「被怪物囚禁 · 顺路救出」口径',
+  ['怪物把我锁进这法阵', '怪物把我扔进来关了三天', '怪物把我看在这儿太久',
+   '这一路救出来的，不止是公主'].every(x => textsV21.includes(x)))
+ok('app.js 首次撞商店按 SHOP_SEEN 判定并先弹 shop_free',
+  appV21.includes('const shopSeenBefore') && appV21.includes('openShop(!shopSeenBefore)') &&
+  appV21.includes('function openShop(firstTime') && appV21.includes("queueStory('shop_free')"))
+const rShopFirst21 = step21(scShop)
+ok('首次撞商店写入 SHOP_SEEN 且发 msg/save（供宿主层判定首次）',
+  !!(rShopFirst21.state.hero.flags & FLAG.SHOP_SEEN) &&
+  rShopFirst21.events.some(e => e.t === 'msg'))
+
+// ⑦ 操作手感：点击排队执行
+ok('app.js 点击排队全链路（enqueue / pump / clear）',
+  ['let inputQueue', 'function enqueueInput', 'function pumpInputQueue', 'function clearInputQueue']
+    .every(x => appV21.includes(x)))
+ok('app.js 动画期间格子点击 / 方向键改为排队而非丢弃',
+  appV21.includes("if (animating) { enqueueInput({ kind: 'walk', x, y }); return }") &&
+  appV21.includes('const aq = KEYMAP[k]'))
+ok('app.js 动画结束回调立即 pumpInputQueue（不再等手动重点一次）',
+  /animating = false; hideBattleFx\(\)[\s\S]{0,240}pumpInputQueue\(\)/.test(appV21))
+ok('app.js 重开 / 读档 / 回放 / 确认弹窗统一清空队列',
+  (appV21.match(/clearInputQueue\(\)/g) || []).length >= 6)
 
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)
