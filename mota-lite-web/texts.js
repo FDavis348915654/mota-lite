@@ -352,6 +352,8 @@ export const TEXTS = {
     animOff: '战斗动画：关',
     soundOn: '音效：开',
     soundOff: '音效：静音',
+    vibOn: '振屏：开',
+    vibOff: '振屏：关',
     assetTitle: '美术与音效资源',
     assetNote: '本地生成的像素精灵 / 循环动画 / 氛围插画 / 8-bit 音效',
     recHint: '步数按本次会话计（导入存档后从 0 起算）；读档到已通关状态不重复计数。',

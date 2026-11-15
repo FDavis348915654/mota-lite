@@ -1713,7 +1713,7 @@ try {
     /软门槛/.test(helpRule17) && /各 \+40%/.test(helpRule17),
     'len=' + (helpRule17 ? helpRule17.length : 0))
   const titleV17 = await ev("document.querySelector('#titleVersion').textContent")
-  check('v0.20 版本：标题徽章显示 v0.20.0', /v0\.20\.0/.test(titleV17), titleV17)
+  check('v0.20 版本：标题徽章显示 v0.20.1', /v0\.20\.1/.test(titleV17), titleV17)
 
   // 真实点击：1F 裸装破不了防 -> 攻击堆上去后同一只怪可击败（破防临界端到端）
   const P17 = await ev(`(async()=>{
@@ -1797,8 +1797,8 @@ try {
   check('v0.20 任务链：完全不强化 noCharge 不再保证通关（用户本次明确澄清）',
     !V18.none || !V18.none.ok)
   check('v0.18 任务链：任务格 13F j / 15F T / 16F Z / 17F C+N / 19F q / 1F e', V18.taskGrid)
-  check('v0.20 任务链：版本 v0.20.0 / meta.schema=11',
-    V18.version==='v0.20.0' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
+  check('v0.20 任务链：版本 v0.20.1 / meta.schema=11',
+    V18.version==='v0.20.1' && V18.schema===11, V18.version + ' / schema ' + V18.schema)
 
 
   // ---- v0.19 攻击吸血怪 / 前期精英化 / 后期普通怪 / 守门怪强化 专项端到端 ----
@@ -1837,7 +1837,7 @@ try {
       potion: ps.effect.hp===100 && pl.effect.hp===400,
       guard: t.MONSTERS.find(m=>m.ch==='6').hpW===1.5 && t.MONSTERS.find(m=>m.ch==='X').hpW===1.0,
       schema: cfg.meta.schema===11 && cfg.meta.curve.lossGain===1.5,
-      version: (await import('./version.js')).VERSION==='v0.20.0'
+      version: (await import('./version.js')).VERSION==='v0.20.1'
     };
   })()`)
   check('v0.19 吸血怪：普伤为 0 时仍按当前 HP 15% 吸血（hpCost = k×吸血）', V19.noBreak,
@@ -1851,7 +1851,7 @@ try {
   check('v0.19 吸血怪 16 只分布（1F~12F 每层 1 / 13F 起隔层）', V19.grid)
   check('v0.19 血瓶 ×2 HP 供给（100 / 400）', V19.potion)
   check('v0.19 守门怪 hpW1.5 / 宝库守卫 hpW1.0', V19.guard)
-  check('v0.20 版本 v0.20.0 / schema11 / lossGain1.5', V19.schema && V19.version)
+  check('v0.20 版本 v0.20.1 / schema11 / lossGain1.5', V19.schema && V19.version)
 
 
   // ---- v0.20 前期防杀抑制：端到端回放 + 帮助弹层口径 ----
@@ -1878,7 +1878,7 @@ try {
       atk11:[29,61,55,70,99,110,112,120,134,150,158].every((v,i)=>fs[i].atk===v),
       tail:fs.slice(11,21).every((v,i,a)=>i===0||v.atk>=a[i-1].atk),
       schema:(await (await fetch('./levels/levels.json')).json()).meta.schema===11,
-      version:(await import('./version.js')).VERSION==='v0.20.0'
+      version:(await import('./version.js')).VERSION==='v0.20.1'
     };
   })()`)
   check('v0.20 前期防杀消除：正式回放 1F~11F 常规怪零伤率 0%', V20.zero===0 && V20.n>0,
@@ -1887,7 +1887,7 @@ try {
     String(V20.earlyLoss))
   check('v0.20 默认回放仍通关且 3410 步', V20.win && V20.steps===3410)
   check('v0.20 前 11 组 ATK 定稿值 + 12F 起不回落', V20.atk11 && V20.tail)
-  check('v0.20 版本 v0.20.0 / meta.schema=11', V20.version && V20.schema)
+  check('v0.20 版本 v0.20.1 / meta.schema=11', V20.version && V20.schema)
   const helpRule20 = await ev("document.querySelector('#helpRule').textContent")
   check('v0.20 文案：帮助弹层渲染出防杀消除 / 合理利用金币经验',
     /防杀/.test(helpRule20) && /合理利用手上的金币与经验/.test(helpRule20),

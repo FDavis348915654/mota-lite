@@ -47,7 +47,7 @@ let replayMode = false, route = [], snapshots = [], cursor = 0
 let playTimer = null, speed = 320, backup = null
 
 // 表现层状态
-let atlas = null, spriteMode = true, animOn = true, soundOn = true
+let atlas = null, spriteMode = true, animOn = true, soundOn = true, vibOn = true
 let animating = false
 // v0.6.0：点击格子移动 / 设置浮层状态
 // v0.16：点击寻路每步间隔 = 「移动一格的时间」；走到实体旁后等同样一拍再交互
@@ -360,6 +360,7 @@ function render() {
   renderHud(); updateSavePreview(); renderBattlePreview(); renderOver()
 }
 function pulse() {
+  if (!vibOn) return   // v0.20.1：设置里可关振屏；开关状态由 applySettings/loadSettings 同步
   deviceEl.classList.remove('vib'); void deviceEl.offsetWidth
   deviceEl.classList.add('vib'); setTimeout(() => deviceEl.classList.remove('vib'), 180)
 }
@@ -606,9 +607,9 @@ function step(dir) {
   // 因此「战斗胜利」不能靠 moved 判定（否则音效 / 动画全丢），直接看胜利事件；
   // 剧情触发也改用 progressed（移动 或 结算了交互），避免原地交互时丢失剧情。
   const battleWon = !!beforeMon && events.some(t => t.startsWith('胜 '))
-  // v0.13：常驻 NPC 对话 / 封印门提示只有 msg 事件（无 save / vibrate），
-  // 若不算 interacted 会丢掉法师兑换 / 盗贼任务 / 封印门剧情；任何事件都算「发生了交互」。
-  const interacted = r.events.some(e => e.t === 'save' || e.t === 'vibrate' || e.t === 'msg')
+  // v0.20.1：vibrate 回归纯「振屏」语义，不再承担 progressed 判定。
+  // 每个交互分支都至少发 msg 或 save（v0.13 起就如此），收窄后剧情 / 商店弹框不丢。
+  const interacted = r.events.some(e => e.t === 'save' || e.t === 'msg')
   const progressed = moved || interacted
   playSfx(pickSfx(events, beforeTile, battleWon))
 
@@ -1088,6 +1089,7 @@ function normalizeSettings(raw) {
     sprite: typeof o.sprite === 'boolean' ? o.sprite : true,
     anim: typeof o.anim === 'boolean' ? o.anim : true,
     sound: typeof o.sound === 'boolean' ? o.sound : true,
+    vib: typeof o.vib === 'boolean' ? o.vib : true,
     speed: SPEEDS.indexOf(Number(o.speed)) >= 0 ? Number(o.speed) : 320,
     zoom: ZOOMS.indexOf(String(o.zoom)) >= 0 ? String(o.zoom) : defaultZoom()
   }
@@ -1100,20 +1102,22 @@ function saveSettings() {
   try {
     const z = String(deviceEl.style.zoom)
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      sprite: spriteMode, anim: animOn, sound: soundOn, speed,
+      sprite: spriteMode, anim: animOn, sound: soundOn, vib: vibOn, speed,
       zoom: ZOOMS.indexOf(z) >= 0 ? z : defaultZoom()
     }))
   } catch (e) { /* 隐私模式 */ }
 }
 // 冷启动唯一入口：内存变量 + 工作台按钮 + 设置浮层 + 速度 / 缩放一次同步到位
 function applySettings(o) {
-  spriteMode = o.sprite; animOn = o.anim; soundOn = o.sound
+  spriteMode = o.sprite; animOn = o.anim; soundOn = o.sound; vibOn = o.vib
   $('btnSprite').classList.toggle('on', spriteMode)
   $('btnSprite').textContent = spriteMode ? TEXTS.ui.spriteOn : TEXTS.ui.spriteOff
   $('btnAnim').classList.toggle('on', animOn)
   $('btnAnim').textContent = animOn ? TEXTS.ui.animOn : TEXTS.ui.animOff
   $('btnSound').classList.toggle('on', soundOn)
   $('btnSound').textContent = soundOn ? TEXTS.ui.soundOn : TEXTS.ui.soundOff
+  $('btnVib').classList.toggle('on', vibOn)
+  $('btnVib').textContent = vibOn ? TEXTS.ui.vibOn : TEXTS.ui.vibOff
   setSpeed(o.speed)          // 只同步 UI，不写盘（冷启动不产生设置 key）
   deviceEl.style.zoom = o.zoom
   document.querySelectorAll('.zoom-row button[data-zoom]').forEach(x => x.classList.toggle('on', x.dataset.zoom === o.zoom))
@@ -1128,6 +1132,8 @@ function syncSettings() {
   $('setAnim').classList.toggle('on', animOn)
   $('setSound').textContent = soundOn ? '音效：开' : '音效：静音'
   $('setSound').classList.toggle('on', soundOn)
+  $('setVib').textContent = vibOn ? '振屏：开' : '振屏：关'
+  $('setVib').classList.toggle('on', vibOn)
 }
 function openSettings() {
   pause(); stopAuto()
@@ -1236,12 +1242,20 @@ function toggleSound() {
   syncSettings(); saveSettings()
   if (soundOn) ensureAudio().then(() => playSfx('click'))
 }
+function toggleVib() {
+  vibOn = !vibOn
+  $('btnVib').classList.toggle('on', vibOn)
+  $('btnVib').textContent = vibOn ? TEXTS.ui.vibOn : TEXTS.ui.vibOff
+  syncSettings(); saveSettings(); playSfx('click')
+}
 $('btnSprite').addEventListener('click', toggleSprite)
 $('setSprite').addEventListener('click', toggleSprite)
 $('btnAnim').addEventListener('click', toggleAnim)
 $('setAnim').addEventListener('click', toggleAnim)
 $('btnSound').addEventListener('click', toggleSound)
 $('setSound').addEventListener('click', toggleSound)
+$('btnVib').addEventListener('click', toggleVib)
+$('setVib').addEventListener('click', toggleVib)
 $('btnActSettings').addEventListener('click', openSettings)
 $('btnActCodex').addEventListener('click', openCodex)
 $('codexClose').addEventListener('click', closeCodex)

@@ -271,10 +271,14 @@ ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互
 ok('CHANGELOG 保留 v0.17.0 条目（怪防 / 高防挡路怪 / 难度提高）',
   CHANGELOG.some(c => c.v === 'v0.17.0' && c.note.includes('防御') &&
     c.note.includes('挡路') && c.note.includes('难度')))
-ok('CHANGELOG 首条为 v0.20.0 且说明难度曲线 / 防杀 / 合理利用金币经验 / 4 条路径口径',
-  CHANGELOG[0].v === 'v0.20.0' && CHANGELOG[0].note.includes('难度曲线再次调高') &&
-  CHANGELOG[0].note.includes('防杀') && CHANGELOG[0].note.includes('合理利用手上的金币') &&
-  CHANGELOG[0].note.includes('4 条正常强化时机路径'))
+ok('CHANGELOG 首条为 v0.20.1 且说明振屏范围 / 振屏开关 / 防御 +20%',
+  CHANGELOG[0].v === 'v0.20.1' && CHANGELOG[0].note.includes('振屏') &&
+  CHANGELOG[0].note.includes('开关') && CHANGELOG[0].note.includes('20%'))
+// v0.20.1 成为首条（patch），v0.20.0 记录改为「存在该条目」（沿用 v0.13.1 的处理）
+ok('CHANGELOG 保留 v0.20.0 条目（难度曲线 / 防杀 / 合理利用金币经验 / 4 条路径口径）',
+  CHANGELOG.some(c => c.v === 'v0.20.0' && c.note.includes('难度曲线再次调高') &&
+    c.note.includes('防杀') && c.note.includes('合理利用手上的金币') &&
+    c.note.includes('4 条正常强化时机路径')))
 ok('CHANGELOG 保留 v0.19.0 条目（攻击吸血怪 / 不管破防 / 先打怪还是先捡血瓶 / 守门怪强化）',
   CHANGELOG.some(c => c.v === 'v0.19.0' && c.note.includes('攻击吸血怪') &&
     c.note.includes('不管能不能破防') && c.note.includes('先打怪还是先捡血瓶') &&
@@ -283,6 +287,26 @@ ok('CHANGELOG 保留 v0.18.0 条目（任务顺序重排 / 软门槛 / 百分比
   CHANGELOG.some(c => c.v === 'v0.18.0' && c.note.includes('任务顺序重排') &&
     c.note.includes('软门槛') && c.note.includes('百分比') && c.note.includes('剧情深度')))
 
+// ---- v0.20.1 振屏范围 / 振屏开关 / 防御增益：静态防漂移 ----
+const manifest21 = JSON.parse(read('assets/manifest.json'))
+ok('manifest.json version = 0.20.1', manifest21.version === '0.20.1', manifest21.version)
+ok('logic.js 定义 DEF_GAIN=1.2', /DEF_GAIN:\s*1\.2/.test(logicSrc))
+ok('logic.js 清理死配置 VIBRATE_GAP', !logicSrc.includes('VIBRATE_GAP:'))
+ok('logic.js 仅 4 处 vibrate 事件', (logicSrc.match(/\{ t: 'vibrate' \}/g) || []).length === 4)
+ok('app.js 振屏开关 vibOn 全链路（pulse 拦截 / 持久化 / 双按钮）',
+  ['if (!vibOn) return', 'vib: vibOn', 'vibOn = o.vib', 'function toggleVib',
+   "$('btnVib')", "$('setVib')"].every(x => app.includes(x)))
+ok('app.js interacted 不再依赖 vibrate（事件协议解耦）',
+  app.includes("const interacted = r.events.some(e => e.t === 'save' || e.t === 'msg')"))
+ok('index.html 有 btnVib / setVib 注入点',
+  html.includes('id="btnVib"') && html.includes('id="setVib"'))
+ok('texts.js 有 vibOn / vibOff 文案',
+  textsSrcV.includes('vibOn:') && textsSrcV.includes('vibOff:'))
+ok('validate_logic.mjs 有 v0.20.1 专项段（基线隔离 + 增益验证）',
+  read('tools/validate_logic.mjs').includes('=== v0.20.1') &&
+  read('tools/validate_logic.mjs').includes('CONFIG.DEF_GAIN = 1'))
+ok('validate_assets.mjs 版本对齐已改 0.20.1',
+  read('tools/validate_assets.mjs').includes("version === '0.20.1'"))
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
 ok('make_levels.py 有隔间 / 宝库 / 精英常量',

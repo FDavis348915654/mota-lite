@@ -26,6 +26,12 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = f => readFileSync(path.join(root, f), 'utf8')
 
+// v0.20.1：CONFIG.DEF_GAIN 是运行时难度旋钮（默认 1.2）。本脚本既有断言校验的是
+// 逻辑层结构 + v0.20.0 数值基线（破防临界 / 通关路线逐步重放 / 存档往返都依赖它），
+// 统一在 DEF_GAIN=1 下跑，否则 findSolution() 返回 null 会崩在 sol.state 上、并连带
+// 打挂存档与图鉴断言；文件末尾的 v0.20.1 专项段再恢复 1.2 单独验证增益本身。
+CONFIG.DEF_GAIN = 1
+
 let pass = 0, fail = 0
 function ok(name, cond, detail) {
   if (cond) { console.log('  ✓ ' + name + (detail ? '  ' + detail : '')); pass++ }
@@ -865,9 +871,9 @@ console.log('\n=== 11. v0.12 暗门 / 铁门 / 钥匙经济 ===')
     const sec0 = secretAt(0, a0.x, a0.y)
     ok('撞暗门：停在原地（v0.11「撞一下」语义）', rA.state.x === standA.x && rA.state.y === standA.y)
     ok('撞暗门：墙格清成地板', tileAt(rA.state, a0.x, a0.y) === '.')
-    ok('撞暗门：发「撞开暗门」+ vibrate + save',
+    ok('撞暗门：发「撞开暗门」+ msg + save（v0.20.1 不再振屏）',
       rA.events.some(e => e.t === 'msg' && e.text.includes('撞开暗门')) &&
-      rA.events.some(e => e.t === 'vibrate') && rA.events.some(e => e.t === 'save'))
+      !rA.events.some(e => e.t === 'vibrate') && rA.events.some(e => e.t === 'save'))
     ok('撞暗门：墙后奖励按 SECRET 生效',
       (sec0.item === 'key_y' ? rA.state.hero.keys.y - beforeY === 1 : true) &&
       (sec0.item === 'potion_s' ? rA.state.hero.hp - beforeHp === 50 : true), sec0.item)
@@ -1258,5 +1264,90 @@ console.log('\n=== 11. v0.18 任务顺序重排 / 软门槛 / 百分比灌顶 ==
     earlyLoss20 >= 3000, String(earlyLoss20))
   ok('v0.20 默认回放仍通关且 3410 步', s20.ended === 'win' && sol20.steps.length === 3410)
 }
+
+// ==== v0.20.1 专项：振屏范围 / 振屏开关 / 防御增益 ====
+console.log('\n=== v0.20.1 振屏范围与防御增益 ===')
+const logicSrc21 = read('logic.js')
+const vibCount = (logicSrc21.match(/\{ t: 'vibrate' \}/g) || []).length
+ok('logic.js 仅保留 4 处 vibrate（战斗失败 / 胜利 / 阵亡 / 炸弹）', vibCount === 4, String(vibCount))
+ok('logic.js 清理死配置 VIBRATE_GAP', !logicSrc21.includes('VIBRATE_GAP:'))
+ok('logic.js 的 DEF_GAIN 默认值为 1.2（运行时真值）', /DEF_GAIN:\s*1\.2/.test(logicSrc21))
+CONFIG.DEF_GAIN = 1.2   // 专项段恢复运行时真值；上方既有断言段跑在基线 1 上
+
+// 所有怪物 def 相对 DEF_GAIN=1 基线提升 20%（两次取整允许 ±1）
+const defDiff = MONSTERS.map(m => {
+  CONFIG.DEF_GAIN = 1;   const a = scaledMon(m, 0).def
+  CONFIG.DEF_GAIN = 1.2; const b = scaledMon(m, 0).def
+  return { id: m.id, a, b }
+})
+ok('所有 MONSTERS 的 def 精确提升 20%（含 noScale 魔王）',
+  defDiff.every(d => d.b >= Math.round(d.a * 1.2) - 1 && d.b <= Math.round(d.a * 1.2) + 1),
+  defDiff.map(d => d.id + ':' + d.a + '→' + d.b).join(' '))
+
+// 结构后果：守门石头人 defW=1.23 贴着破防临界，×1.2 后回合暴涨
+const stone21 = monsterByCh('6')
+const probe21 = { atk: 20, def: 20, hp: 100000, keys: { y: 0, b: 0, r: 0 }, flags: 0 }
+CONFIG.DEF_GAIN = 1;   const rBase21 = calcBattle(probe21, stone21, 0)
+CONFIG.DEF_GAIN = 1.2; const rGain21 = calcBattle(probe21, stone21, 0)
+ok('守门石头人回合数因 +20% 防御暴涨（结构后果如实记录）',
+  rGain21.rounds > rBase21.rounds * 3, rBase21.rounds + ' → ' + rGain21.rounds + ' 回合')
+ok('DEF_GAIN=1.2 下 findSolution 诚实返回 null（用户明确「不用考虑平衡」，主路被高防守门怪切断）',
+  findSolution() === null)
+
+// 振屏范围：战斗 / 炸弹发，其余交互不发
+const hasVib = r => r.events.some(e => e.t === 'vibrate')
+function scene21(pred) {
+  const dirs = [[1, 0, 'right'], [-1, 0, 'left'], [0, 1, 'down'], [0, -1, 'up']]
+  for (let f = 0; f < FLOORS.length; f++) {
+    const rows = FLOORS[f].rows
+    for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++) {
+      if (!pred(rows[y][x])) continue
+      for (const [dx, dy, dir] of dirs) {
+        const sx = x - dx, sy = y - dy
+        if (sx < 0 || sy < 0 || sx >= rows[0].length || sy >= rows.length) continue
+        if (rows[sy][sx] === '#' || monsterByCh(rows[sy][sx])) continue
+        return { f, x, y, sx, sy, dir, ch: rows[y][x] }
+      }
+    }
+  }
+  return null
+}
+function step21(sc, mut) {
+  const s = newGame(); s.floor = sc.f; s.x = sc.sx; s.y = sc.sy
+  s.explored = { [sc.f]: 1 }
+  if (mut) mut(s)
+  return resolveStep(s, sc.dir)
+}
+const scMon  = scene21(ch => !!monsterByCh(ch))
+const scDoor = scene21(ch => !!DOOR_KEY[ch])
+const scShop = scene21(ch => ch === 'N')
+const scUp   = scene21(ch => ch === 'U')
+const scItem = scene21(ch => !!itemByCh(ch) && !'eMTNAZWGUD'.includes(ch))
+const scBomb = scene21(ch => { const m = monsterByCh(ch); return m && !m.bombImmune })
+ok('v0.20.1 场景齐备（怪 / 门 / 商店 / 楼梯 / 道具 / 可炸怪）',
+  !!(scMon && scDoor && scShop && scUp && scItem && scBomb))
+ok('战斗胜利发 vibrate',
+  hasVib(step21(scMon, s => { s.hero.atk = 9999; s.hero.def = 9999; s.hero.hp = 999999 })))
+ok('战斗失败（破不了防 / 会阵亡）发 vibrate',
+  hasVib(step21(scMon, s => { s.hero.atk = 1; s.hero.def = 1; s.hero.hp = 10 })))
+ok('炸弹发 vibrate', (() => {
+  const s = newGame(); s.floor = scBomb.f; s.hero.bomb = 1
+  s.x = scBomb.x - 1 >= 0 ? scBomb.x - 1 : scBomb.x + 1; s.y = scBomb.y
+  s.explored = { [scBomb.f]: 1 }
+  return hasVib(useBomb(s))
+})())
+ok('开门不发 vibrate',
+  !hasVib(step21(scDoor, s => { s.hero.keys[DOOR_KEY[scDoor.ch]] = DOOR_COST[scDoor.ch] || 1 })))
+ok('商店不发 vibrate', !hasVib(step21(scShop)))
+ok('换层不发 vibrate', !hasVib(step21(scUp)))
+ok('拾取不发 vibrate', !hasVib(step21(scItem)))
+ok('商店成交不发 vibrate', !hasVib(shopBuy((() => { const s = newGame(); s.hero.gold = 999; return s })(), 'atk')))
+ok('法师兑换不发 vibrate', !hasVib(mageBuy((() => {
+  const s = newGame(); s.hero.exp = 999; s.hero.flags |= FLAG.MAGE_FREED; return s
+})(), 'atk')))
+ok('飞行器不发 vibrate', !hasVib(useFly((() => {
+  const s = newGame(); s.hero.fly = 1; s.explored = { 0: 1, 1: 1 }; return s
+})(), 1)))
+
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '。\n')
 process.exit(fail ? 1 : 0)

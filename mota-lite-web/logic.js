@@ -8,7 +8,7 @@
 //
 // 事件协议（保持 M1 的三类最小集合，不新增 UI 事件）：
 //   { t:'msg', text }   提示条文本
-//   { t:'vibrate' }     需要振动
+//   { t:'vibrate' }     v0.20.1 起仅用于战斗冲击反馈（撞怪结算 / 炸弹），宿主层据此振屏
 //   { t:'save' }        本步改变了持久状态，宿主层应写盘
 // 文本框弹层 / 战斗动画 / 音效全部由宿主层按「state + 配置表 + 本步 tile」推断，
 // 逻辑层不耦合任何表现层概念，因此仍可纯 node 验证。
@@ -45,7 +45,10 @@ import {
 // 这修掉 v0.8 的根因：怪 ATK 全局常量、玩家 DEF 单调涨到 240，导致 100% 零伤。
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
 export function scaledMon(mon, floor, hero) {
-  if (!mon || mon.noScale) return mon
+  if (!mon) return mon
+  // v0.20.1：noScale（魔王）也统一 ×DEF_GAIN，保证「所有怪物」口径一致；
+  // 魔王 W 在 resolveStep 里走到即通关、不参与战斗结算，def 只是图鉴展示值。
+  if (mon.noScale) return { ...mon, def: Math.round(mon.def * (CONFIG.DEF_GAIN || 1)) }
   const fl = floor == null ? 0 : floor
   // v0.19：吸血怪前期精英化 —— 低层套超前层 FLOOR_SCALE，成为
   // 「打不过、后期成长起来再回头打」的强敌；到 eliteBefore 层起
@@ -74,7 +77,7 @@ export function scaledMon(mon, floor, hero) {
     elite: isElite,
     hp: Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp)),
     atk: Math.max(1, Math.round(s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk)),
-    def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW) * mul.def))
+    def: Math.max(0, Math.round(s.def * (mon.defW == null ? 1 : mon.defW) * mul.def * (CONFIG.DEF_GAIN || 1)))
   }
 }
 
@@ -84,7 +87,9 @@ export const CONFIG = {
   MIN_DAMAGE_1: false,  // 经典 50 层：ATK<=DEF 判「不可破防」；部分版本强制 1 点伤害
   CELL: 28,             // 格子边长 px（7 列 * 28 = 196，212 宽左右各留 8）
   SAFE_LR: 8,           // 胶囊圆角左右安全区
-  VIBRATE_GAP: 300,     // ms，振动最小间隔
+  // v0.20.1：所有怪物防御统一增益（用户口径「不用考虑平衡」，按字面 ×1.2）。
+  // 原 VIBRATE_GAP 是 M1 遗留死配置（宿主层 pulse() 从未按它节流），一并移除。
+  DEF_GAIN: 1.2,
   SAVE_LIMIT: 4096,     // v3：21 层 13×15 大地图通关存档实测 1025B，留 4 倍余量
   HANDHELD_SAVE_LIMIT: 128, // 手环端 @system.storage 的参考上限，仅用于 UI 提示；移植时须恢复（spec 附 D）
   SHOP_COST: 20,        // 商店一次交易花费金币（经典 21 层魔塔固定价）
@@ -281,7 +286,7 @@ export function resolveStep(prev, direction) {
     }
     s.hero.keys[needKey] -= cost
     setTile(s, nx, ny, '.')
-    ev.push({ t: 'vibrate' }, { t: 'msg', text: '门已打开' }, { t: 'save' })
+    ev.push({ t: 'msg', text: '门已打开' }, { t: 'save' })
     if (t === 'G') ev.push({ t: 'msg', text: '铁门开启 · 耗 ' + cost + ' 把黄钥匙' })
     return { state: s, events: ev }
   }
@@ -289,7 +294,7 @@ export function resolveStep(prev, direction) {
   // 2.4 封印门 Z（v0.13）：16F 上楼唯一入口，三色钥匙都对不上符文锁，
   //     只有盗贼任务线（交还锁匠工具）能远程撬开。撞它只给提示。
   if (t === 'Z') {
-    ev.push({ t: 'vibrate' }, {
+    ev.push({
       t: 'msg', text: '门上挂着符文锁，三色钥匙都对不上——也许盗贼有办法'
     })
     return { state: s, events: ev }
@@ -303,7 +308,7 @@ export function resolveStep(prev, direction) {
     const sec = secretAt(s.floor, nx, ny)
     if (sec && itemById(sec.item)) applyEffect(s.hero, itemById(sec.item).effect)
     setTile(s, nx, ny, '.')
-    ev.push({ t: 'vibrate' }, {
+    ev.push({
       t: 'msg', text: sec ? '撞开暗门：发现 ' + sec.name : '撞开暗门：后面是空墙'
     }, { t: 'save' })
     return { state: s, events: ev }
@@ -345,7 +350,7 @@ export function resolveStep(prev, direction) {
     if (!(s.hero.flags & FLAG.MAGE_FREED)) {
       applyEffect(s.hero, itemByCh('M').effect)
       s.hero.flags |= FLAG.MAGE_FREED
-      ev.push({ t: 'vibrate' }, {
+      ev.push({
         t: 'msg', text: '已救出 被困的法师（防御 +8、生命 +100）'
       }, { t: 'save' })
     } else {
@@ -359,7 +364,7 @@ export function resolveStep(prev, direction) {
     if (st === 0) {
       applyEffect(s.hero, itemByCh('T').effect)
       setThiefStage(s.hero, 1)
-      ev.push({ t: 'vibrate' }, {
+      ev.push({
         t: 'msg', text: '已救出 被困的盗贼（黄钥匙 +3、金币 +40）'
       }, { t: 'save' })
     } else if (st === 1) {
@@ -368,7 +373,7 @@ export function resolveStep(prev, direction) {
         setThiefStage(s.hero, 2)
         const z = specialDoorPos()
         if (z) setTileAt(s, z.floor, z.x, z.y, '.')   // 远程撬开 16F 封印门
-        ev.push({ t: 'vibrate' }, {
+        ev.push({
           t: 'msg', text: '盗贼掂了掂工具：16F 的封印门，开了'
         }, { t: 'save' })
       } else {
@@ -380,7 +385,7 @@ export function resolveStep(prev, direction) {
         setThiefStage(s.hero, 3)
         s.hero.hp += 300; s.hero.atk += 5; s.hero.def += 5
         setTile(s, nx, ny, '.')   // 盗贼离塔，格子清空
-        ev.push({ t: 'vibrate' }, {
+        ev.push({
           t: 'msg', text: '盗贼收下钱袋，留下谢礼后消失在暗道（生命 +300、攻 +5、防 +5）'
         }, { t: 'save' })
       } else {
@@ -407,7 +412,7 @@ export function resolveStep(prev, direction) {
       s.hero.def = Math.round(s.hero.def * (1 + ratio))
       s.hero.hp = Math.round(s.hero.hp * (1 + ratio))
       s.hero.flags = (s.hero.flags & ~FLAG.CORE_HELD) | FLAG.FAY_CHARGED
-      ev.push({ t: 'vibrate' }, {
+      ev.push({
         t: 'msg', text: '塔灵灌顶：攻 ' + b.atk + '→' + s.hero.atk +
           ' / 防 ' + b.def + '→' + s.hero.def + ' / 生命 ' + b.hp + '→' + s.hero.hp +
           '（+' + Math.round(ratio * 100) + '%），上层护盾散去'
@@ -425,7 +430,6 @@ export function resolveStep(prev, direction) {
     setTile(s, nx, ny, '.')
     // 被救的法师 / 盗贼走同一个「一次性奖励」通道，只是文案是「救出」而不是「获得」
     const npc = item.id.indexOf('npc_') === 0
-    if (npc) ev.push({ t: 'vibrate' })
     ev.push({ t: 'msg', text: (npc ? '已救出 ' : '获得 ') + item.name }, { t: 'save' })
     // v0.11：拾取 / 救出后停在原地，不踩进实体格（与战斗一致）。
     return { state: s, events: ev }
@@ -437,7 +441,7 @@ export function resolveStep(prev, direction) {
     if (h && itemById(h.item)) {
       applyEffect(s.hero, itemById(h.item).effect)
       setTile(s, nx, ny, '.')
-      ev.push({ t: 'msg', text: '发现隐藏的 ' + h.name }, { t: 'vibrate' }, { t: 'save' })
+      ev.push({ t: 'msg', text: '发现隐藏的 ' + h.name }, { t: 'save' })
     } else {
       setTile(s, nx, ny, '.')
       ev.push({ t: 'msg', text: '这里什么也没有' }, { t: 'save' })
@@ -454,26 +458,27 @@ export function resolveStep(prev, direction) {
     s.x = landing ? landing.x : 1
     s.y = landing ? landing.y : 1
     s.explored[nf] = 1        // v0.8：到过就算探索，飞行器只能跳回这里
-    ev.push({ t: 'vibrate' }, { t: 'msg', text: '进入 ' + target.name }, { t: 'save' })
+    ev.push({ t: 'msg', text: '进入 ' + target.name }, { t: 'save' })
     return { state: s, events: ev }
   }
 
   // 6. 通关
   if (t === 'W') {
     s.x = nx; s.y = ny; s.ended = 'win'
-    ev.push({ t: 'vibrate' }, { t: 'msg', text: '通关！魔王已被击败' }, { t: 'save' })
+    ev.push({ t: 'msg', text: '通关！魔王已被击败' }, { t: 'save' })
     return { state: s, events: ev }
   }
 
   // 7. 商店：v0.8 起商人也是「不可踩上去」的实体，撞上去只对话不移动。
   //    v0.13：首次撞商店写入 SHOP_SEEN（宿主层据此让「购买」按钮出现）；
-  //    vibrate 让 step() 的 progressed 为 true，键盘撞商店也能弹交易框（补 v0.8 遗漏）。
+  //    v0.20.1：不再发 vibrate（振屏只留给战斗）；progressed 由 msg 事件保证，
+  //    键盘撞商店仍能弹交易框（v0.13 起 interacted 判定已含 msg）。
   if (t === 'N') {
     if (!(s.hero.flags & FLAG.SHOP_SEEN)) {
       s.hero.flags |= FLAG.SHOP_SEEN
       ev.push({ t: 'save' })
     }
-    ev.push({ t: 'vibrate' }, { t: 'msg', text: '商人：欢迎光临，看看货吧' })
+    ev.push({ t: 'msg', text: '商人：欢迎光临，看看货吧' })
     return { state: s, events: ev }
   }
 
@@ -481,7 +486,7 @@ export function resolveStep(prev, direction) {
   s.x = nx; s.y = ny
   if (s.hero.hp <= 0) {
     s.ended = 'dead'
-    ev.push({ t: 'vibrate' }, { t: 'msg', text: '阵亡' }, { t: 'save' })
+    ev.push({ t: 'msg', text: '阵亡' }, { t: 'save' })
   }
   return { state: s, events: ev }
 }
@@ -506,7 +511,7 @@ export function useFly(prev, delta) {
   s.floor = nf
   s.x = landing ? landing.x : 1
   s.y = landing ? landing.y : 1
-  ev.push({ t: 'vibrate' }, {
+  ev.push({
     t: 'msg', text: '飞行器：' + (delta > 0 ? '上升' : '下降') + '到 ' + target.name
   }, { t: 'save' })
   return { state: s, events: ev }
@@ -593,7 +598,7 @@ export function shopBuy(prev, kind) {
   s.hero.gold -= offer.cost
   if (offer.kind === 'key') s.hero.keys.y += offer.amount
   else s.hero[offer.stat] += offer.amount
-  ev.push({ t: 'vibrate' }, {
+  ev.push({
     t: 'msg', text: '成交：' + offer.label + ' +' + offer.amount + '（-' + offer.cost + 'G）'
   }, { t: 'save' })
   return { state: s, events: ev }
@@ -623,7 +628,7 @@ export function mageBuy(prev, kind) {
   }
   s.hero.exp -= CONFIG.EXP_COST
   s.hero[g.stat] += g.amount
-  ev.push({ t: 'vibrate' }, {
+  ev.push({
     t: 'msg', text: '法师施法：' + g.label + ' +' + g.amount + '（-' + CONFIG.EXP_COST + ' EXP）'
   }, { t: 'save' })
   return { state: s, events: ev }
