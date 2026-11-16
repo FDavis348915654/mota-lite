@@ -48,14 +48,17 @@ THEMES = [
 # 有房间的层（0-based）
 ROOM_FLOORS = {1, 3, 5, 7, 10, 11, 12, 14, 16, 18}
 # 房间内容（1-based 层号 -> 类型）
+# v0.24.0：用户「4F 起才有商店」——把商人房从 2F 挪到 4F（2F 改宝库）。
+# 两层都在 ROOM_FLOORS 有房间，仅交换内容即可，房间结构 / 生成链 / 17F 核心 C 主线不动。
 ROOM_KIND = {
-    2: 'merchant', 4: 'treasure', 6: 'codex', 8: 'mage', 11: 'fly',
+    2: 'treasure', 4: 'merchant', 6: 'codex', 8: 'mage', 11: 'fly',
     12: 'elder', 13: 'treasure', 15: 'thief', 17: 'merchant', 19: 'treasure',
 }
 # v0.13：16F 上楼唯一入口改放「特殊封印门 Z」——三色钥匙都开不了，
 # 只有完成盗贼任务线（15F 救盗贼 -> 13F 找回锁匠工具 -> 交给盗贼）才会被远程撬开。
 # 这就是用户要求的「不开就过不去、走不到后面楼层」的硬门槛。
 SPECIAL_DOOR_FLOOR = 16
+ADV_SHOP_FLOOR = 16      # v0.24.0：16F 增设进阶商人实体（封印门层，无房间）
 FLY_FLOOR = 11      # 唯一飞行器（1-based，11F 房间）
 BOSS_FLOOR = 21     # 顶层王座（1-based）
 
@@ -305,49 +308,41 @@ def count_mobs(floors):
 
 
 def build_floor_scale(cnt):
-    """21 组逐层「标准怪」数值：按每层目标总损血 / 该层怪数摊薄，消除曲线锯齿。
+    """v0.24.0 逐层精算「标准怪」数值（纯静态定值表，唯一数值源）。
 
-    v0.17：改成「先定怪防、再反解 HP/ATK」的口径。
-      · 怪防 def = defRatio * pa（pa = 玩家进层建模 ATK），直接修掉 v0.16
-        「防御只有 0.30·pa」的根因；
-      · perHit = pa - def 变薄 -> 回合数由 battleRounds 控制，hp = (R-1)*perHit+1；
-      · 每怪损血 = (R-1)*(atk - pd)，以 v0.16 实测值为基准再乘 lossGain，
-        反解 monPerHit = cost/(R-1)、atk = pd + monPerHit，保证损血只上调
-        lossGain 这一档、不失控放大。
-    注意：不能用 targetLoss/mobs 反解 —— v0.16 的 atk 含 +defGap / atkFloor
-    下限，实际每怪损血是摊薄基数的 2~6 倍，按基数反解会把难度反而调低。
+    参考原版魔塔「玩家平滑成长 + 怪物分段阶梯跃升 + 资源精确配给」，并按用户
+    「每层都要拼尽全力」定标。基准 PD 是「递增定价收敛经济后，真实回放里玩家
+    首次进该层时的 DEF」（0-based 层索引 0~20，来自 tools/ 真实回放实测）；
+    17F 取核心→回 1F 灌顶会让 DEF 跃升，用 min(PD[f+1], PD[f]+45) 钳平，
+    避免把单次往返污染成低层怪 ATK 的尖峰。
+
+      · 怪 ATK 定值 = (离层 DEF + 逐层递增净伤) / 0.90
+        —— /0.90 保证连 atkW=0.92 的守门石头人也略高于玩家「离层 DEF」，
+           整层清怪期间 DEF 单调涨、始终不越过怪 ATK，从根上消除整层防杀；
+      · 怪防定值 = 0.30 × 进层 ATK（留足破防余量，perHit 充足、回合可控）；
+      · 怪 HP 定值 = (R-1)·perHit + 1，R=3 → 玩家先手 2 次反击，
+           单场损血 = 2 × 净伤，逐层随 net 递增而不是失控放大。
+
+    21 组逐层 + ELITE_SHIFT(9) 组线性外推（供精英 X / 前期吸血蝠取超前层）。
     """
-    c = CURVE_CFG
-    R = c.get('battleRounds', 5)
-    gain = c.get('lossGain', 1.0)
+    PD = [10, 23, 46, 61, 71, 97, 113, 116, 133, 154, 167, 173, 187,
+          213, 244, 250, 263, 412, 428, 446, 459]
+    N0, K, R = 10, 1.2, 3
     out = []
     for f in range(21):
-        pa, pd = ACT_A[f], ACT_D[f]
-        # 校准实录：曾改用「层内 DEF 中点」(ACT_D[f]+ACT_D[f+1])/2 作基准想
-        # 减少低层零伤，但净伤被 max(0,·) 截断 + atk 前缀钳制后实际损血远超
-        # 估算，20F 实测 HP 剩 50、全层 lethal 死局，故回退到进层 DEF。
-        # 低层零伤偏多是 v0.16 延续现象（v0.16 已有 46 场零伤）；本轮挑战性
-        # 主要来自「怪防翻倍 -> 破防临界 / 回合 3→5 / 高防挡路怪 7~8 回合」
-        # 与全塔损血 +26%，17F 起每层 1100~1500 损血已明显收紧。
-        floor_loss = (c['loss0'] + c['lossK'] * f) * c.get('lossMul', 1.0)
-        # 每怪目标损血：v0.16 实测标定 costMul=5.0 后再乘 lossGain
-        cost = floor_loss / max(1, cnt[f]) * c.get('costMul', 5.0) * gain
-        # v0.17 核心：怪防按玩家【实测】ATK 的比例直接给
-        # v0.18：ACT_A[f] 在 17F~21F 已是「未强化路径」实测基准，故全局
-        # defRatio 保持 0.65 即可自然留出破防余量（见数组注释 / 开发盘点 0-P）。
-        dfn = round(c.get('defRatio', 0.65) * pa)
-        per_hit = max(1, pa - dfn)
-        hp = (R - 1) * per_hit + 1
-        mon_per_hit = cost / (R - 1)
-        atk = pd + mon_per_hit
-        # 前缀最大值钳制，保证「怪 ATK 逐层不回落」—— 玩家 DEF 增长始终追不上。
-        atk = max(atk, out[-1]['atk']) if out else atk
-        out.append({'hp': round(hp), 'atk': round(atk), 'def': round(dfn),
-                    'targetLoss': round(floor_loss), 'mobs': cnt[f]})
-
-    # v0.14：精英怪取 FLOOR_SCALE[floor + ELITE_SHIFT]。18F 精英会索引到 26，
-    # 越过 21 层，故按末 3 组平均增量线性外推，保持「超前 9 层」的强度语义，
-    # 避免高层精英退化成「当层就能打」。外推段只供精英使用，普通怪索引恒在 0~20。
+        d_in = PD[f]
+        d_out = min(PD[f + 1] if f + 1 <= 20 else PD[20], d_in + 45)
+        a_in = max(20, d_in - 6)
+        net = N0 + K * f
+        s_atk = round((d_out + net) / 0.90)
+        s_def = max(2, round(0.30 * a_in))
+        per_hit = max(1, round(a_in - s_def * 1.1))
+        s_hp = (R - 1) * per_hit + 1
+        atk = max(s_atk, out[-1]['atk']) if out else s_atk   # 逐层不回落
+        out.append({'hp': s_hp, 'atk': atk, 'def': s_def,
+                    'targetLoss': round((R - 1) * net * max(1, cnt[f])),
+                    'mobs': cnt[f]})
+    # v0.14 外推：精英 X / 前期精英化吸血蝠取「超前层」数值，保持强敌语义
     last, prev = out[-1], out[-4]
     step = {
         'hp': max(1, round((last['hp'] - prev['hp']) / 3)),
@@ -361,9 +356,6 @@ def build_floor_scale(cnt):
             'def': last['def'] + step['def'] * (k + 1),
             'targetLoss': last['targetLoss'], 'mobs': last['mobs'],
         })
-    # v0.20 防杀抑制（返回后处理，不进前缀钳制链 / 不污染精英外推段）
-    for f in range(min(len(DEF_GROWTH), 21)):
-        out[f]['atk'] += round(ANTI_BLOCK_K * DEF_GROWTH[f])
     return out
 
 
@@ -894,6 +886,15 @@ def place_entities(g, rng, floor_no, has_room, inner, special,
         # 房门口守怪（中等，支线；打不过也不影响通关）
         g[9][6] = '4' if floor_no % 2 else '2'
 
+    # v0.24.0：16F（封印门层，无房间）增设「进阶商人」实体，地图真实可见。
+    # 放在 y=2 行第一个空格：y=1 是纯空走廊，N 是实体、不动候选池、不改变其它层
+    # 的确定性布局（仅 16F 生效），flood_ok 仍由 make_floor 末尾统一校验。
+    if floor_no == ADV_SHOP_FLOOR:
+        for ax in range(1, W - 1):
+            if g[2][ax] == '.':
+                g[2][ax] = 'N'
+                break
+
     return hidden_here
 
 
@@ -1218,8 +1219,8 @@ def build():
 
     data = {
         'meta': {
-            'schema': 11,
-            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈 + v0.18 任务顺序重排/核心移 17F 商人房/台阶提前 15F/软门槛/强化改按当前值百分比/护盾加成强化后取消 + v0.19 攻击吸血怪 9（按玩家当前 HP 15%/次、独立于破防伤害）/前期精英化 eliteBefore/12F 起进常规池/守门怪 hp×1.5/常规怪损血 ×1.15/4 处宝库守卫强度上调 + v0.20 前期防杀抑制（怪 ATK 建模基准由「进层 DEF」修正为「清怪时 DEF」再上浮 50%/前期零伤 30%→0%/难度曲线调高；血瓶·守门怪·逻辑层均不动）。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
+            'schema': 12,
+            'note': '关卡配置唯一编辑源（21 层 × 13×15 主题大地图 + v0.9 逐层强度曲线 + v0.10 三色门封唯一入口 + v0.12 暗门/铁门/钥匙经济 + v0.13 经验/盗贼任务线/老者炸弹/16F 封印门Z + v0.14 隔间/加密实体/强敌守宝库X + v0.15 走廊闸墙/单格瓶颈守路怪/支路凹室资源把守 + FLOOR_SCALE 外推供 scaleShift + v0.16 小精灵/能量核心/17F 起屏障护盾 + 怪数 12/损血 ×1.3 + v0.17 怪防按 0.65·玩家ATK 建模/战斗 5 回合/损血再 ×1.3/石头人高防低攻挡主路瓶颈 + v0.18 任务顺序重排/核心移 17F 商人房/台阶提前 15F/软门槛/强化改按当前值百分比/护盾加成强化后取消 + v0.19 攻击吸血怪 9（按玩家当前 HP 15%/次、独立于破防伤害）/前期精英化 eliteBefore/12F 起进常规池/守门怪 hp×1.5/常规怪损血 ×1.15/4 处宝库守卫强度上调 + v0.20 前期防杀抑制（怪 ATK 建模基准由「进层 DEF」修正为「清怪时 DEF」再上浮 50%/前期零伤 30%→0%/难度曲线调高；血瓶·守门怪·逻辑层均不动） + v0.24.0 回归纯静态定值表（撤 isCommon 全局乘数）/商店·法师递增定价收敛 DEF 膨胀/21 层逐层精算曲线（怪 ATK=可达 DEF+逐层递增净伤）/商人房 2F→4F/16F 增设进阶商人/真实回放校验。改这里，然后跑 python3 tools/build_tables.py 重新生成 tables.js；不要手改 tables.js。',
             'generator': 'tools/make_levels.py', 'output': 'tables.js',
             'mapSize': {'cols': W, 'rows': H},
             'viewport': {'cols': 7, 'rows': 9},

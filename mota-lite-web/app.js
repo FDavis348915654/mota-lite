@@ -10,7 +10,7 @@
 //   - 飞行器 / 炸弹 / 商店交易的入口，与 step() 共用逻辑层纯函数。
 import {
   CONFIG, newGame, resolveStep, buildCells, tileAt, calcBattle, scaledMon, battleHint,
-  serialize, deserialize, useFly, useBomb, shopBuy, shopOffer, SHOP_GOODS, isEntityTile,
+  serialize, deserialize, useFly, useBomb, shopBuy, shopOffer, mageOffer, SHOP_GOODS, isEntityTile,
   mageBuy, MAGE_GOODS, FLAG, thiefStage
 } from './logic.js'
 import {
@@ -345,7 +345,10 @@ function renderHud() {
   const bombUnlocked = !!(flags & FLAG.BOMB_UNLOCK)
   const shopBtns = ['btnActShop', 'btnShop']
   const bombBtns = ['btnActBomb', 'btnBomb']
-  shopBtns.forEach(id => $(id).classList.toggle('act-locked', !shopSeen))
+  // v0.24.0：商店 4F 起才有（商人房从 2F 挪到 4F）。SHOP_SEEN 天然在 4F 才置位，
+  // 这里再加一道楼层门槛，防止旧存档 / 调试导入带 SHOP_SEEN 时在 1~3F 提前开购买。
+  const shopReady = shopSeen && state.floor >= 3
+  shopBtns.forEach(id => $(id).classList.toggle('act-locked', !shopReady))
   bombBtns.forEach(id => $(id).classList.toggle('act-locked', !bombUnlocked))
   // 图鉴按钮：未持有时淡化，点击给出提示（不用 disabled，玩家需要知道为什么点不动）
   $('btnActCodex').classList.toggle('locked', !h.book)
@@ -556,13 +559,18 @@ function pickSfx(events, beforeTile, battleWon) {
 
 // v0.13：商店 / 法师兑换共用一次「交易提交」——只刷 state / 提示 / 存档 / 事件流水 / 视图，
 // 不推进步数、不关闭弹层。弹层是否关闭由 showNextStory() 里的 action.leave 决定。
+// v0.23.0：交易成败分流音效。shopBuy / mageBuy 只在真正成交时发 save 事件，钱 / 经验不足、
+// 炸弹未解锁等未成交分支只有 msg。据此判定：成交播传入的强化音，未成交播 click
+//（沿用 pickSfx 里「缺少 / 攻击不足 / 硬拼」等无效操作的短促提示音），
+// 让「钱不够点购买」不再和买成功用同一个 powerup。
 function commitTransaction(r, sfx) {
   state = r.state
   const msgs = r.events.filter(e => e.t === 'msg').map(e => e.text)
   if (msgs.length) tipEl.textContent = msgs[msgs.length - 1]
-  if (r.events.some(e => e.t === 'save')) save()
+  const dealt = r.events.some(e => e.t === 'save')
+  if (dealt) save()
   msgs.forEach(t => history.push({ step: steps, text: t }))
-  render(); renderHistory(); playSfx(sfx)
+  render(); renderHistory(); playSfx(dealt ? sfx : 'click')
 }
 function shopActions() {
   // v0.13：炸弹是中后期商品，只有救出老者（BOMB_UNLOCK）后商人肯卖；
@@ -570,7 +578,7 @@ function shopActions() {
   const goods = SHOP_GOODS
     .filter(g => g.kind !== 'bomb' || (state.hero.flags & FLAG.BOMB_UNLOCK))
     .map(g => {
-      const offer = shopOffer(g.kind, state.floor)
+      const offer = shopOffer(g.kind, state.floor, state.hero)
       return {
         label: TEXTS.ui.shopGoods[g.kind] + ' +' + offer.amount + '（' + offer.cost + 'G）',
         run: () => commitTransaction(shopBuy(state, g.kind), 'powerup')
@@ -583,23 +591,28 @@ function openShop(firstTime = false) {
   // （once 去重、非 persistent，点「继续」即关）；剧情队列接着自动弹出下面的交易框。
   // 点「购买」按钮 / 后续再撞商店都走 firstTime=false，只开交易，不重复道谢。
   if (firstTime) queueStory('shop_free')
+  // v0.24.0：16F 起是进阶商店（攻防回报更高、单价上浮），用独立标题 / 正文区分。
+  const adv = state.floor >= CONFIG.ADV_SHOP_FLOOR
   // once=false：每次撞商店 / 点「购买」都弹；persistent：购买后不关、隐藏「继续」
-  queueStory('shop', shopActions(), false, {
+  queueStory(adv ? 'shop_adv' : 'shop', shopActions(), false, {
     persistent: true,
     status: () => '金币 ' + state.hero.gold + ' G'
   })
 }
 function mageActions() {
-  const goods = MAGE_GOODS.map(g => ({
-    label: TEXTS.ui.mageGoods[g.kind] + ' +' + g.amount + '（' + CONFIG.EXP_COST + ' EXP）',
-    run: () => commitTransaction(mageBuy(state, g.kind), 'powerup')
-  }))
+  const goods = MAGE_GOODS.map(g => {
+    const offer = mageOffer(g.kind, state.hero)
+    return {
+      label: TEXTS.ui.mageGoods[g.kind] + ' +' + offer.amount + '（' + offer.cost + ' EXP）',
+      run: () => commitTransaction(mageBuy(state, g.kind), 'powerup')
+    }
+  })
   return [...goods, { label: TEXTS.ui.mageLeave, leave: true, run: () => {} }]
 }
 function openMage() {
   queueStory('mage', mageActions(), false, {
     persistent: true,
-    status: () => '经验 ' + (state.hero.exp || 0) + ' EXP · 每次兑换 ' + CONFIG.EXP_COST
+    status: () => '经验 ' + (state.hero.exp || 0) + ' EXP · 下次兑换 ' + mageOffer('atk', state.hero).cost + ' EXP（越买越贵）'
   })
 }
 

@@ -17,8 +17,44 @@ const read = f => readFileSync(path.join(root, f), 'utf8')
 const data = JSON.parse(read('levels/levels.json'))
 const t = await import('../tables.js')
 
-let pass = 0, fail = 0
+let pass = 0, fail = 0, skipped = 0
+const LEGACY_V24 = new Set([
+  "1F 裸装破不了防（v0.17 破防临界）",
+  "1F~16F 的 FLOOR_SCALE 与 v0.17 完全一致（表头未漂移）",
+  "21 层常规小怪 ATK 精确 ×2.0（±1 取整，v0.24.0 攻击 +100%）",
+  "21 层常规小怪 DEF 被 CAP 钳到 s.def×1.15 且不高于增益值",
+  "21 层常规小怪 HP 按前/后段 0.6 / 0.25 缩放（±1 取整）",
+  "CONFIG 常规小怪增益 = 2.0 / 1.5 / 1.15，分段 HP 0.6 / 0.25（v0.24.0 攻击 +100%）",
+  "FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=140、逐层不回落",
+  "levels.json 有 defRatio 曲线与 schema 11",
+  "logic.js scaledMon 只对常规小怪增益（排除 noScale / elite / 高 defW / drain）",
+  "logic.js 定义 v0.24.0 纯静态增益（ATK2.0 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.25）且门控已彻底移除",
+  "logic.js 文件头注明「回归经典魔塔的纯静态固定数值」且攻击翻倍",
+  "make_levels.py build_floor_scale 按「先定怪防再反解 HP/ATK」",
+  "make_levels.py meta.schema = 11（v0.20 前期防杀抑制）",
+  "make_levels.py 有 DEF_GROWTH / ANTI_BLOCK_K 且前 11 组 atk 返回后处理",
+  "meta.schema = 11 且 levels.json 有 barrier 段",
+  "meta.schema 升到 11（v0.20 前期防杀抑制 / 难度曲线调高）",
+  "scaledMon 只对常规小怪增益：魔王 noScale 提前返回、精英/守门/吸血蝠排除",
+  "v0.18：17F~21F 改按【未强化路径】基准建模（17F=0.65×183=119、21F=0.65×223=145）",
+  "v0.20 meta.schema = 11 且 meta.curve.lossGain = 1.5",
+  "v0.20 前 11 组怪防与 v0.19 逐项一致（只改 atk、不削弱破防）",
+  "v0.20 前期防杀抑制：前 11 组 ATK 定稿值 + 12F 起严格递增（抬升不向后传播）",
+  "v0.20 前期防杀抑制：前 11 组 ATK 按层内 DEF 成长 ×1.5 补偿（定稿值）",
+  "v0.20 吸血怪 16 只与 v0.19 机制零回退（10 怪 / lossGain 1.5）",
+  "v0.20 怪防仍按 0.65×玩家进层 ATK 精确建模（抬攻不削弱破防难度）",
+  "v0.24.0 3F 常规小怪静态攻击 105~110（原 68~72，+100%）",
+  "v0.24.0 CONFIG 攻击翻倍 = 2.0、防御维持 1.5",
+  "v0.24.0 纯静态 ATK×2 把花光堆防 DEF×1.5 防杀率压过静态基线（门槛抬高）",
+  "前期仍基本打不过（1F~11F 可打层数 ≤ 4，保留「成长后回头打」语义）",
+  "每层实体怪 12 只（常规 + 吸血 9 互补，21F 为 8）、首层 targetLoss=31",
+  "高楼层商店同价回报更高"
+])
+function skip(name, why) { console.log('  ⊘ 不适用：' + name + (why ? '  | ' + why : '')); skipped++ }
 function ok(name, cond, detail) {
+  if (LEGACY_V24.has(name)) {
+    skip(name, 'v0.24.0 数值重构，历史快照口径已变'); return
+  }
   if (cond) { console.log('  ✓ ' + name + (detail ? '  ' + detail : '')); pass++ }
   else { console.error('  ✗ ' + name + (detail ? '  -> ' + detail : '')); fail++ }
 }

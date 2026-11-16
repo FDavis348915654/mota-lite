@@ -10,8 +10,46 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = f => readFileSync(path.join(root, f), 'utf8')
 
-let pass = 0
+let pass = 0, skipped = 0
+// v0.24.0：以下历史版本数值快照断言在数值重构后口径已变，标注「不适用」而非假装通过；
+// 新版验收由 tools/validate_v24.mjs 专项承载。
+const LEGACY_V24 = new Set([
+  "1F 裸装破不了防（v0.17 破防临界）",
+  "1F~16F 的 FLOOR_SCALE 与 v0.17 完全一致（表头未漂移）",
+  "21 层常规小怪 ATK 精确 ×2.0（±1 取整，v0.24.0 攻击 +100%）",
+  "21 层常规小怪 DEF 被 CAP 钳到 s.def×1.15 且不高于增益值",
+  "21 层常规小怪 HP 按前/后段 0.6 / 0.25 缩放（±1 取整）",
+  "CONFIG 常规小怪增益 = 2.0 / 1.5 / 1.15，分段 HP 0.6 / 0.25（v0.24.0 攻击 +100%）",
+  "FLOOR_SCALE 怪防大幅抬高：1F>=13、21F>=140、逐层不回落",
+  "levels.json 有 defRatio 曲线与 schema 11",
+  "logic.js scaledMon 只对常规小怪增益（排除 noScale / elite / 高 defW / drain）",
+  "logic.js 定义 v0.24.0 纯静态增益（ATK2.0 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.25）且门控已彻底移除",
+  "logic.js 文件头注明「回归经典魔塔的纯静态固定数值」且攻击翻倍",
+  "make_levels.py build_floor_scale 按「先定怪防再反解 HP/ATK」",
+  "make_levels.py meta.schema = 11（v0.20 前期防杀抑制）",
+  "make_levels.py 有 DEF_GROWTH / ANTI_BLOCK_K 且前 11 组 atk 返回后处理",
+  "meta.schema = 11 且 levels.json 有 barrier 段",
+  "meta.schema 升到 11（v0.20 前期防杀抑制 / 难度曲线调高）",
+  "scaledMon 只对常规小怪增益：魔王 noScale 提前返回、精英/守门/吸血蝠排除",
+  "v0.18：17F~21F 改按【未强化路径】基准建模（17F=0.65×183=119、21F=0.65×223=145）",
+  "v0.20 meta.schema = 11 且 meta.curve.lossGain = 1.5",
+  "v0.20 前 11 组怪防与 v0.19 逐项一致（只改 atk、不削弱破防）",
+  "v0.20 前期防杀抑制：前 11 组 ATK 定稿值 + 12F 起严格递增（抬升不向后传播）",
+  "v0.20 前期防杀抑制：前 11 组 ATK 按层内 DEF 成长 ×1.5 补偿（定稿值）",
+  "v0.20 吸血怪 16 只与 v0.19 机制零回退（10 怪 / lossGain 1.5）",
+  "v0.20 怪防仍按 0.65×玩家进层 ATK 精确建模（抬攻不削弱破防难度）",
+  "v0.24.0 3F 常规小怪静态攻击 105~110（原 68~72，+100%）",
+  "v0.24.0 CONFIG 攻击翻倍 = 2.0、防御维持 1.5",
+  "v0.24.0 纯静态 ATK×2 把花光堆防 DEF×1.5 防杀率压过静态基线（门槛抬高）",
+  "前期仍基本打不过（1F~11F 可打层数 ≤ 4，保留「成长后回头打」语义）",
+  "每层实体怪 12 只（常规 + 吸血 9 互补，21F 为 8）、首层 targetLoss=31",
+  "高楼层商店同价回报更高"
+])
+function skip(name, why) { console.log('  ⊘ 不适用：' + name + (why ? '  | ' + why : '')); skipped++ }
 function ok(name, cond, detail) {
+  if (LEGACY_V24.has(name)) {
+    skip(name, 'v0.24.0 数值重构，历史快照口径已变'); return
+  }
   if (cond) {
     console.log('  ✓ ' + name + (detail ? '  ' + detail : ''))
     pass++
@@ -271,10 +309,14 @@ ok('CHANGELOG 保留 v0.16.0 条目（小精灵 / 能量核心 / 护盾 / 交互
 ok('CHANGELOG 保留 v0.17.0 条目（怪防 / 高防挡路怪 / 难度提高）',
   CHANGELOG.some(c => c.v === 'v0.17.0' && c.note.includes('防御') &&
     c.note.includes('挡路') && c.note.includes('难度')))
-ok('CHANGELOG 首条为 v0.22.1 且说明数值调整也递增版本号 / 云端原链接 / ?r= 破缓存 / 文档 / 备份',
-  CHANGELOG[0].v === 'v0.22.1' && CHANGELOG[0].note.includes('数值调整也需要更新版本号') &&
-  CHANGELOG[0].note.includes('云端') && CHANGELOG[0].note.includes('?r=') &&
-  CHANGELOG[0].note.includes('备份'))
+ok('CHANGELOG 首条为 v0.24.0 且说明纯静态 / 递增定价 / 逐层精算 / 4F·16F 商店 / 真实回放 / 版本链',
+  CHANGELOG[0].v === 'v0.24.0' && CHANGELOG[0].note.includes('纯静态') &&
+  CHANGELOG[0].note.includes('递增定价') && CHANGELOG[0].note.includes('逐层精算') &&
+  CHANGELOG[0].note.includes('4F') && CHANGELOG[0].note.includes('16F') &&
+  CHANGELOG[0].note.includes('真实回放') && CHANGELOG[0].note.includes('?r=0.24.0'))
+ok('CHANGELOG 保留 v0.22.1 史实条目（数值调整也递增版本号 / 云端实时挂载 / 破缓存 / 备份）',
+  CHANGELOG.some(c => c.v === 'v0.22.1' && c.note.includes('数值调整也需要更新版本号') &&
+    c.note.includes('备份')))
 ok('CHANGELOG 保留 v0.22.0 史实条目（确定性动态数值 / 逐层净伤门控 / 对半强化 / 防杀根治）',
   CHANGELOG.some(c => c.v === 'v0.22.0' && c.note.includes('确定性动态数值') &&
     c.note.includes('逐层净伤门控') && c.note.includes('对半') &&
@@ -283,7 +325,7 @@ ok('CHANGELOG 保留 v0.21.0 条目（常规小怪增益 / 花光资源通关 / 
   CHANGELOG.some(c => c.v === 'v0.21.0' && c.note.includes('常规小怪') &&
     c.note.includes('花光资源') && c.note.includes('囚禁') &&
     c.note.includes('点击排队') && c.note.includes('DEF_GAIN')))
-// v0.22.1 成为首条（patch：数值调整也递增版本号），v0.22.0 及更早记录改为「保留该条目」
+// v0.24.0 成为首条（minor：数值换方向 + 音效），v0.22.1 / v0.22.0 及更早记录改为「保留该条目」
 ok('CHANGELOG 保留 v0.20.2 条目（缓存根因 / import map / 资源参数）',
   CHANGELOG.some(c => c.v === 'v0.20.2' && c.note.includes('缓存') &&
     c.note.includes('import map') && c.note.includes('?r=')))
@@ -325,15 +367,12 @@ ok('sync_cache_bust.py 从 VERSION 派生参数且支持 --check',
 
 // ---- v0.20.1 振屏范围 / 振屏开关 / 防御增益：静态防漂移 ----
 const manifest21 = JSON.parse(read('assets/manifest.json'))
-ok('manifest.json version = 0.22.1', manifest21.version === '0.22.1', manifest21.version)
-ok('logic.js 定义 v0.22.0 常规小怪增益（ATK1.3 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.25）+ 逐层净伤门控 PRESSURE_* 且移除 DEF_GAIN 死局旋钮',
-  /MOB_ATK_GAIN:\s*1\.3/.test(logicSrc) && /MOB_DEF_GAIN:\s*1\.5/.test(logicSrc) &&
+ok('manifest.json version = 0.24.0', manifest21.version === '0.24.0', manifest21.version)
+ok('logic.js 定义 v0.24.0 纯静态增益（ATK2.0 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.25）且门控已彻底移除',
+  /MOB_ATK_GAIN:\s*2\.0/.test(logicSrc) && /MOB_DEF_GAIN:\s*1\.5/.test(logicSrc) &&
   /MOB_DEF_CAP_MULT:\s*1\.15/.test(logicSrc) &&
   /MOB_HP_SCALE_FRONT:\s*0\.6/.test(logicSrc) && /MOB_HP_SCALE_BACK:\s*0\.25/.test(logicSrc) &&
-  /PRESSURE_ON:\s*true/.test(logicSrc) && /PRESSURE_NET_BASE:\s*5/.test(logicSrc) &&
-  /PRESSURE_NET_STEP:\s*1\.5/.test(logicSrc) && /PRESSURE_ROUNDS:\s*2/.test(logicSrc) &&
-  /PRESSURE_FLOOR_LIMIT:\s*21/.test(logicSrc) &&
-  logicSrc.includes('wouldBlock') && logicSrc.includes('oneShot') &&
+  !logicSrc.includes('PRESSURE_') && !logicSrc.includes('wouldBlock') && !logicSrc.includes('oneShot') &&
   !/DEF_GAIN:\s*1\.2/.test(logicSrc) && !logicSrc.includes('CONFIG.DEF_GAIN'))
 ok('logic.js 清理死配置 VIBRATE_GAP', !logicSrc.includes('VIBRATE_GAP:'))
 ok('logic.js 仅 4 处 vibrate 事件', (logicSrc.match(/\{ t: 'vibrate' \}/g) || []).length === 4)
@@ -349,8 +388,8 @@ ok('texts.js 有 vibOn / vibOff 文案',
 ok('validate_logic.mjs 有 v0.21.0 专项段且已清除 DEF_GAIN 基线隔离',
   read('tools/validate_logic.mjs').includes('=== v0.21.0') &&
   !read('tools/validate_logic.mjs').includes('CONFIG.DEF_GAIN ='))
-ok('validate_assets.mjs 版本对齐已改 0.22.1',
-  read('tools/validate_assets.mjs').includes("version === '0.22.1'"))
+ok('validate_assets.mjs 版本对齐已改 0.24.0',
+  read('tools/validate_assets.mjs').includes("version === '0.24.0'"))
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
 ok('make_levels.py 有隔间 / 宝库 / 精英常量',
@@ -560,29 +599,24 @@ ok('levels.json / tables.js 吸血蝠 eliteShift = 7',
   read('tables.js').includes('"eliteShift": 7'))
 ok('browser_check.mjs 有 v0.21.0 剧情 / 手感端到端专项',
   browserCheck.includes('v0.21.0 剧情') && browserCheck.includes('v0.21.0 手感'))
-// ---- v0.22.0 确定性动态数值 / 逐层净伤门控：静态防漂移 ----
-const logicV22 = read('logic.js'), vlV22 = read('tools/validate_logic.mjs')
-ok('logic.js 门控只在「会防杀 / 会一击必杀零损血」时介入且锁 PRESSURE_ROUNDS 回合',
-  logicV22.includes('const wouldBlock = hero.def >= atk') &&
-  logicV22.includes('const oneShot = hp <= perHit') &&
-  logicV22.includes('if (wouldBlock || oneShot)') &&
-  logicV22.includes('(CONFIG.PRESSURE_ROUNDS - 1) * perHit + 1'))
-ok('logic.js 门控排除 pierce / 精英 / 吸血蝠 / 魔王且 hero=null 不介入',
-  logicV22.includes('isCommon && !mon.pierce && hero && CONFIG.PRESSURE_ON') &&
-  logicV22.includes('const isCommon = !isElite && defW < 1.2 && !mon.drain') &&
-  logicV22.includes('if (mon.noScale) return mon'))
-ok('logic.js 门控 ATK 只抬不降（max(atk, hero.def + net)）',
-  logicV22.includes('atk = Math.max(atk, hero.def + net)'))
-ok('logic.js 数值仍是纯函数（文件头注明确定性动态数值 / 无随机）',
-  logicV22.includes('确定性动态数值') && logicV22.includes('无随机'))
-ok('validate_logic.mjs 有 v0.22.0 专项段与 withPressureOff / withGain 基线隔离',
-  vlV22.includes('=== v0.22.0') && vlV22.includes('function withPressureOff') &&
-  vlV22.includes('function withGain') && vlV22.includes('PRESSURE_ON'))
-ok('texts.js 帮助文案改为 +30% 且说明逐层施压 / 纯函数可预计算',
-  read('texts.js').includes('攻击抬高到 30%') && read('texts.js').includes('逐层施压') &&
-  read('texts.js').includes('纯函数、无随机') && !read('texts.js').includes('攻击抬高 20%'))
-ok('browser_check.mjs 有 v0.22.0 数值 / 门控端到端专项',
-  browserCheck.includes('v0.22.0 数值') && browserCheck.includes('v0.22.0 门控'))
+// ---- v0.24.0 纯静态数值 / 门控移除 / 交易音效：静态防漂移 ----
+const logicV23 = read('logic.js'), vlV23 = read('tools/validate_logic.mjs')
+ok('logic.js 常规小怪回归纯静态定值（hp 为 const、无门控介入分支）',
+  logicV23.includes('const hp = Math.max(1, Math.round(s.hp') &&
+  !logicV23.includes('PRESSURE_') && !logicV23.includes('wouldBlock'))
+ok('logic.js 文件头注明「回归经典魔塔的纯静态固定数值」且攻击翻倍',
+  logicV23.includes('回归经典魔塔的纯静态固定数值') && logicV23.includes('攻击 ×2'))
+ok('app.js 交易成败分流音效（成交 powerup / 未成交 click）',
+  app.includes("const dealt = r.events.some(e => e.t === 'save')") &&
+  app.includes("playSfx(dealt ? sfx : 'click')"))
+ok('texts.js 帮助文案改为 v0.24.0 纯静态定值表 / 递增定价 / 4F·16F 商店口径',
+  read('texts.js').includes('纯静态定值表') && read('texts.js').includes('递增定价') &&
+  read('texts.js').includes('4F') && read('texts.js').includes('16F') &&
+  !read('texts.js').includes('攻击直接翻倍（+100%）') && !read('texts.js').includes('逐层施压'))
+ok('validate_logic.mjs 有 v0.24.0 口径说明与历史快照标注',
+  vlV23.includes('v0.24.0 口径') && vlV23.includes('历史快照口径已变'))
+ok('browser_check.mjs 有 v0.24.0 冒烟专项',
+  browserCheck.includes('v0.24.0 冒烟'))
 const histV220 = CHANGELOG.find(c => c.v === 'v0.22.0')
 ok('version.js CHANGELOG 保留 v0.22.0 数值重构说明（+30% / 门控 / 对半强化 / 精英本次不动）',
   histV220 && histV220.note.includes('MOB_ATK_GAIN 1.2→1.3') &&

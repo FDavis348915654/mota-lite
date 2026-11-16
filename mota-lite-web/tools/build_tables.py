@@ -111,6 +111,8 @@ HEADER = """// tables.js —— 由 tools/build_tables.py 从 levels/levels.json
 // v0.20：前期防杀抑制 —— 前 11 组 FLOOR_SCALE.atk 按实测层内 DEF 成长 ×1.5
 //   补偿（返回后处理，不进前缀钳制链），前期零伤 30%→0%、难度曲线调高；
 //   血瓶 / 守门怪 / 逻辑层均不动；schema 升 11。
+// v0.24.0：回归纯静态定值表 + 递增定价收敛经济 + 21 层逐层精算曲线；
+//   商人房 2F→4F、16F 增设进阶商人、17F 核心 C 主线不动；schema 升 12。
 """
 
 FOOTER = """

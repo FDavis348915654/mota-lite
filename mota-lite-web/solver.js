@@ -12,9 +12,15 @@
 //
 // 输出的 steps 仍是纯方向数组，回放控制台直接消费，接口不变。
 // 可选机制（飞行器 / 炸弹 / 商店）不进路线 —— 它们是捷径而非通关必需。
+//
+// v0.24.0：商店改「递增定价」后，玩家真实玩法是「每过一层花光金币/经验买攻防」。
+// solver 若仍按裸路线（DEF 只有 10~300）规划，会把按「高 DEF」定标的常规怪误判为
+// 打不过、也会把首次本该绕开的强敌误纳入路线。故 findSolution 每轮用真实
+// shopBuy/mageBuy 把资源花光，让 scan/calcBattle 的属性判断与玩家实际一致。
 
 import {
-  newGame, resolveStep, tileAt, calcBattle, isEntityTile, FLAG, thiefStage
+  newGame, resolveStep, tileAt, calcBattle, isEntityTile, FLAG, thiefStage,
+  shopBuy, mageBuy
 } from './logic.js'
 import {
   FLOORS, DOOR_KEY, DOOR_COST, BARRIER, monsterByCh, itemByCh
@@ -145,6 +151,41 @@ function scan(s, noCharge) {
   return g
 }
 
+// v0.24.0：每轮把金币 / 经验花光买攻防（真实 shopBuy / mageBuy，含递增定价）。
+// 商店 4F 起（0-based floor>=3）；HP 偏低时用余钱补一点血，避免前段被 drain 怪
+// 一波带走。策略为「攻防对半」，与真实回放校验口径一致。
+function shopSpend(s, toggle) {
+  if (s.floor < 3 || s.ended) return s
+  let guard = 0
+  while (guard++ < 400) {
+    const k = toggle.v++ % 2 === 0 ? 'atk' : 'def'
+    const alt = k === 'atk' ? 'def' : 'atk'
+    const before = s.hero.gold
+    let r = shopBuy(s, k)
+    if (r.state.hero.gold === before) r = shopBuy(s, alt)
+    if (r.state.hero.gold === before) break
+    s = r.state
+  }
+  guard = 0
+  while (guard++ < 400) {
+    const k = toggle.v++ % 2 === 0 ? 'atk' : 'def'
+    const alt = k === 'atk' ? 'def' : 'atk'
+    const before = s.hero.exp || 0
+    let r = mageBuy(s, k)
+    if ((r.state.hero.exp || 0) === before) r = mageBuy(s, alt)
+    if ((r.state.hero.exp || 0) === before) break
+    s = r.state
+  }
+  guard = 0
+  while (s.hero.hp < 600 && guard++ < 200) {
+    const before = s.hero.gold
+    const r = shopBuy(s, 'hp')
+    if (r.state.hero.gold === before) break
+    s = r.state
+  }
+  return s
+}
+
 export function findSolution(opts) {
   // v0.18 开发工具选项（默认行为完全不变）：
   //   noCharge=true  -> 全程不找小精灵强化，验证「软门槛：不强化也能通关」；
@@ -155,6 +196,7 @@ export function findSolution(opts) {
     ? opts.chargeFloor : BARRIER.floor
   let s = newGame()
   const steps = []
+  const toggle = { v: 0 }
   let visited = 0, rounds = 0
   let backForFairy = false
   // v0.16 起「拿核心 -> 逐层下楼回 1F 灌顶 -> 逐层上楼」跨层往返；
@@ -164,6 +206,7 @@ export function findSolution(opts) {
   while (!s.ended && steps.length < MAX_STEPS) {
     rounds++
     if (rounds > 1400) return null           // 防策略死循环；含精灵跨层往返
+    s = shopSpend(s, toggle)                 // v0.24.0：真实玩法，先花光再规划
 
     // v0.13 盗贼任务线：持有任务道具且盗贼在等交付时，优先逐层下楼回 15F（floor index 14）。
     // stage1（交锁匠工具）是通关硬门槛 —— 16F 封印门 Z 不开就到不了上层；stage2（交钱袋）

@@ -45,12 +45,13 @@ import {
 // 这修掉 v0.8 的根因：怪 ATK 全局常量、玩家 DEF 单调涨到 240，导致 100% 零伤。
 // noScale（魔王）用自身终局数值；pierce（法师系）攻击为真实伤害，无视玩家 DEF。
 //
-// v0.22.0：常规小怪增补「确定性动态数值」——scaledMon 本就接收 hero（v0.18 护盾起），
-// 现在「会防杀 / 会一击必杀零损血」时按玩家当前 DEF 把该怪重定为高攻短回合（见下方门控）。
-// 数值仍是纯函数 (mon, floor, hero) -> 定值，无随机、无外部状态：图鉴 / 战斗预览 /
-// solver.findSolution / resolveStep 结算全部同源，玩家仍可据图鉴精确预计算本场损血。
-// 变化的是「同一只怪在不同 DEF 下数值不同」：从固定数值扩展为确定性动态数值，
-// 用来根治静态模型无法回避的堆防防杀（详见 CONFIG.PRESSURE_* 与 CHANGELOG）。
+// v0.24.0：回归经典魔塔「纯静态定值表」——撤掉 v0.21~v0.23 的 isCommon 全局乘数
+// （MOB_ATK_GAIN / MOB_DEF_GAIN / MOB_DEF_CAP_MULT / MOB_HP_SCALE_*），同一只怪在同一层
+// 攻防恒定、与玩家 DEF 完全无关，数值只来自 FLOOR_SCALE[层] × 怪种权重 × 能量护盾 boost。
+// 参考原版 50 层「玩家平滑成长 + 怪物分段阶梯 + 资源精确配给」的设计：把逐层精算
+// （每层怪 ATK = 该层可达 DEF + 逐层递增净伤）直接写进 FLOOR_SCALE，并用商店 / 法师
+// 「递增定价」收敛玩家 DEF 的无限膨胀，从根上消除「花光资源堆防后整层防杀」。
+// 商店 4F 起才有（商人房从 2F 挪到 4F）、16F 增设进阶商人，17F 核心 C 主线不动。
 export function scaledMon(mon, floor, hero) {
   if (!mon) return mon
   // v0.21.0：魔王 noScale 保持自身终局数值（走到即通关、不参与战斗结算），不参与小怪增益。
@@ -81,45 +82,11 @@ export function scaledMon(mon, floor, hero) {
   const defW = mon.defW == null ? 1 : mon.defW
   const baseAtk = s.atk * (mon.atkW == null ? 1 : mon.atkW) * mul.atk
   const baseDef = s.def * defW * mul.def
-  // v0.21.0：常规小怪 = 非精英(含吸血蝠前期精英形态)、非吸血蝠(单独削弱)、
-  // 且 defW < 1.2（守门石头人除外）。精英 X / 魔王 / 守门石头人保持 v0.20.0 基线不动。
-  const isCommon = !isElite && defW < 1.2 && !mon.drain
-  let atk = Math.max(1, Math.round(baseAtk))
-  let def = Math.max(0, Math.round(baseDef))
-  let hpScale = 1
-  if (isCommon) {
-    atk = Math.max(1, Math.round(baseAtk * (CONFIG.MOB_ATK_GAIN || 1)))
-    const gained = Math.round(baseDef * (CONFIG.MOB_DEF_GAIN || 1))
-    // 破防保底：+50% 防御会把 defW≥1.03 的怪顶过玩家建模 ATK（perHit≤0 死局），
-    // 故钳到「标准怪防 s.def × CAP」，保证建模路线 perHit>0。
-    const cap = Math.round(s.def * (CONFIG.MOB_DEF_CAP_MULT || 1))
-    def = Math.max(0, Math.min(gained, cap))
-    // 回合数守恒：怪防抬高压缩 perHit，若 hp 不动则回合数翻倍 → 反击累积 lethal。
-    // 按楼层分前/后段缩放 hp 把单场总损血拉回基线（生成链 hp=(R-1)·perHit+1 的同一建模）。
-    hpScale = fl < 11 ? (CONFIG.MOB_HP_SCALE_FRONT || 1) : (CONFIG.MOB_HP_SCALE_BACK || 1)
-  }
-  let hp = Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp * hpScale))
-  // v0.22.0 逐层净伤门控：只在「这一场确实会防杀 / 会一击必杀零损血」时介入。
-  // 固定数值模型下怪 ATK 是楼层表静态值，玩家 DEF 却能靠金币经验持续堆高，
-  // 一旦 DEF ≥ 怪 ATK 就 monPerHit=0（防杀），再高的怪防 / 怪 HP / 回合数都不起作用
-  // （反击次数再多也是 0 伤害）——纯静态加百分比永远追不上堆防，无法根治。
-  // 故把这只常规小怪重定为「高攻、短回合」：ATK 抬到 玩家DEF + 逐层净伤 net(层)，
-  // HP 锁成 (R-1)·perHit+1 令 rounds 恒 = R、hits 恒 = R-1，每场稳定掉 (R-1)·net 血。
-  //   · 不介入的场次（前期 DEF 还没超标）保留静态基线，适度买防仍能减净伤 -> 买防有用；
-  //   · 介入后净伤 = net 随层数线性递增 -> 每过一层更难打、堆防不能无限躺赢；
-  //   · pierce 法师系无视玩家 DEF（monPerHit = 怪ATK 真实伤害），不适用基于 DEF 的门控，排除；
-  //   · 精英 / 守门石头人 / 吸血蝠 / 魔王本来就不吃常规小怪增益（isCommon 已排除），不动。
-  // hero 为 null 时（校验 / 图鉴基线查询）不介入，FLOOR_SCALE 基线仍可精确复算。
-  if (isCommon && !mon.pierce && hero && CONFIG.PRESSURE_ON && fl < CONFIG.PRESSURE_FLOOR_LIMIT) {
-    const perHit = Math.max(1, hero.atk - def)
-    const wouldBlock = hero.def >= atk          // 这一场会防杀
-    const oneShot = hp <= perHit                // 这一场会一击必杀（hits=0）零损血
-    if (wouldBlock || oneShot) {
-      const net = Math.max(1, Math.round(CONFIG.PRESSURE_NET_BASE + fl * CONFIG.PRESSURE_NET_STEP))
-      atk = Math.max(atk, hero.def + net)       // 只抬不降，避免一击必杀场次把怪 ATK 反而拉低
-      hp = Math.max(1, (CONFIG.PRESSURE_ROUNDS - 1) * perHit + 1)
-    }
-  }
+  // v0.24.0 纯静态：撤掉 isCommon 全局乘数，怪数值 = FLOOR_SCALE[层] × 怪种权重 × 护盾 boost。
+  // 逐层精算与递增定价（见 CONFIG / levels.json meta.note）共同保证「每层都要拼尽全力」。
+  const atk = Math.max(1, Math.round(baseAtk))
+  const def = Math.max(0, Math.round(baseDef))
+  const hp = Math.max(1, Math.round(s.hp * (mon.hpW == null ? 1 : mon.hpW) * mul.hp))
   return {
     ...mon,
     elite: isElite,
@@ -135,46 +102,16 @@ export const CONFIG = {
   MIN_DAMAGE_1: false,  // 经典 50 层：ATK<=DEF 判「不可破防」；部分版本强制 1 点伤害
   CELL: 28,             // 格子边长 px（7 列 * 28 = 196，212 宽左右各留 8）
   SAFE_LR: 8,           // 胶囊圆角左右安全区
-  // v0.21.0 常规小怪攻防增益 / v0.22.0 上调攻击 + 新增逐层净伤门控。
-  //   · v0.20.1 的 DEF_GAIN=1.2 是「不用考虑平衡」的死局旋钮（findSolution=null），已移除。
-  //   · MOB_ATK_GAIN / MOB_DEF_GAIN 只作用常规小怪，排除魔王 / 精英 / 守门石头人(见 scaledMon)。
-  //     v0.22.0 按用户「小怪攻击力提升30%」把 ATK 从 1.2 上调到 1.3（DEF 维持 1.5 = +50%）。
-  //   · MOB_DEF_CAP_MULT：+50% 防御会让 defW≥1.03 的怪 perHit≤0（破不了防死局），
-  //     故把增益后的 def 钳到「标准怪防 s.def × 该倍数」，保证建模路线 perHit>0、回合可控。
-  //   · 用户反馈「金币经验对半加强攻防后 4F~8F 打小怪全是防杀、打精英又打不过」，
-  //     实测 +30% 静态攻击追不上堆防（DEF149/164 vs 怪ATK146/156），故 v0.22.0 新增
-  //     下方 PRESSURE_* 门控（见 scaledMon），把「固定数值」扩展为「确定性动态数值」。
-  MOB_ATK_GAIN: 1.3,
-  MOB_DEF_GAIN: 1.5,
-  // 破防保底 CAP 与分段损血守恒：由 CAP×HP 网格叠加 4 条强化时机路径实测定标。
-  // CAP=1.15（CAP≥1.4 时任何 HP 缩放都死局）。只按单常数缩 HP 虽能保默认路线通关，
-  // 却会砍掉「延后到 19F / 20F 才强化」两条路径，或把前期损血削到基线以下。
-  // 分段 0.6/0.3 后：全程损血 14604≈基线 14571、前期损血 7563（基线 4955，+52%）、
-  // 4 条路径全通关且梯度健康、防杀率 54.5%→40.9%（见 CHANGELOG）。
-  MOB_DEF_CAP_MULT: 1.15,
-  // 怪防抬高会压薄 perHit、把回合数放大 → 反击次数翻倍 → lethal。
-  // 生成链 hp=(R-1)·perHit+1 本就是「锁定回合数」的建模，故增益常规小怪时
-  // 同步按系数缩放 hp，把单场总损血拉回基线。
-  // v0.21.0 分前/后段标定：前期(1F~11F)玩家 HP 余量足，保留较多怪 HP 让难度不退化；
-  // 后期(12F 起，尤其灌顶前后)余量薄，缩更多 HP 保住「延后到 19F/20F 才强化」的路径不被 lethal 切断。
-  // 两个值由 CAP × HP 网格叠加 4 条强化时机路径实测定标（见 CHANGELOG）。
-  MOB_HP_SCALE_FRONT: 0.6,
-  // v0.22.0：ATK 1.2→1.3 后后段净伤抬高、总损血上浮，HP 后段 0.3→0.25 把单场总损血拉回，
-  // 保住「延后到 19F / 20F 才强化」两条路径不被 lethal 切断（实测定标见 CHANGELOG）。
-  MOB_HP_SCALE_BACK: 0.25,
-  // ---- v0.22.0 逐层净伤门控（根治「堆防防杀」，用户「再调一版比 +30%/+50% 更激进」）----
-  // PRESSURE_ON：总开关（校验脚本可临时关掉拿 v0.21 静态基线做对比）。
-  // PRESSURE_NET_BASE / STEP：介入时把常规小怪净伤抬到 net(层) = BASE + 层索引 × STEP，
-  //   逐层线性递增 -> 「每过一层都感觉怪物更难打」。定标 5 + 1.5×层（21F 净伤约 35/下）：
-  //   更大(net≥6+2f)会把 d20 纯路线压到只剩 ~96HP 太贴 lethal，更小则体感不够激进。
-  // PRESSURE_ROUNDS：介入时把战斗锁成 R 回合（hits=R-1），令每场稳定掉 (R-1)×net 血，
-  //   同时避免「perHit 小 → rounds 暴涨 → 每回合固定净伤累积 lethal」把 findSolution 打挂。
-  // PRESSURE_FLOOR_LIMIT：门控作用的楼层上限，21 = 全程精英断层之外都覆盖。
-  PRESSURE_ON: true,
-  PRESSURE_NET_BASE: 5,
-  PRESSURE_NET_STEP: 1.5,
-  PRESSURE_ROUNDS: 2,
-  PRESSURE_FLOOR_LIMIT: 21,
+  // v0.24.0：撤掉 v0.21~v0.23 的 5 个 isCommon 全局乘数（纯静态，数值全部落在 FLOOR_SCALE
+  // 定值表）。改用「递增定价」收敛玩家 DEF 的无限膨胀——攻/防买得越多单价越高，
+  // 花光金币/经验也不再把 DEF 堆到远超过怪 ATK 的程度，从根上消除整层防杀。
+  SHOP_COST_STEP: 12,     // 攻/防属性每涨 SHOP_COST_PER 点，单价 +STEP（金币）
+  SHOP_COST_PER: 18,
+  EXP_COST_STEP: 15,      // 法师经验兑换同理（经验）
+  EXP_COST_PER: 18,
+  ADV_SHOP_FLOOR: 15,     // 0-based：16F 起进阶商店（攻/防回报更高、单价上浮）
+  ADV_SHOP_BONUS: 4,      // 进阶档每次攻/防额外 +4
+  ADV_SHOP_COST: 10,      // 进阶档攻/防单价上浮
   SAVE_LIMIT: 4096,     // v3：21 层 13×15 大地图通关存档实测 1025B，留 4 倍余量
   HANDHELD_SAVE_LIMIT: 128, // 手环端 @system.storage 的参考上限，仅用于 UI 提示；移植时须恢复（spec 附 D）
   SHOP_COST: 20,        // 商店一次交易花费金币（经典 21 层魔塔固定价）
@@ -646,31 +583,41 @@ export function shopTier(floor) {
   return Math.floor((floor || 0) / CONFIG.SHOP_TIER_FLOORS)
 }
 
-export function shopOffer(kind, floor) {
+export function shopOffer(kind, floor, hero) {
   const good = SHOP_GOODS.find(g => g.kind === kind) || SHOP_GOODS[0]
   const tier = shopTier(floor)
+  const adv = (floor || 0) >= CONFIG.ADV_SHOP_FLOOR   // v0.24.0：16F 起进阶商店
   // 钥匙不按楼层档位加量：1 把就是 1 把，价格固定，铁门要几把就买几把
   if (good.kind === 'key') {
     return { kind: 'key', label: '黄钥匙', stat: 'key', amount: 1,
-      cost: CONFIG.KEY_COST, tier }
+      cost: CONFIG.KEY_COST, tier, adv }
   }
   // v0.13：炸弹也是固定量固定价（中后期能力，不随档位变强）
   if (good.kind === 'bomb') {
     return { kind: 'bomb', label: '炸弹', stat: 'bomb', amount: 1,
-      cost: CONFIG.BOMB_COST, tier }
+      cost: CONFIG.BOMB_COST, tier, adv }
   }
+  // v0.24.0：进阶档攻/防回报更高
   const amount = good.kind === 'hp'
     ? 100 + tier * 20 * CONFIG.SHOP_TIER_BONUS
-    : CONFIG.SHOP_ATK + tier * CONFIG.SHOP_TIER_BONUS
+    : CONFIG.SHOP_ATK + tier * CONFIG.SHOP_TIER_BONUS + (adv ? CONFIG.ADV_SHOP_BONUS : 0)
+  // v0.24.0 递增定价：只针对攻/防（用户「花光金币买攻防」玩法），血瓶/钥匙不递增。
+  // 同一属性越高，下一次购买越贵 —— 收敛 DEF 无限膨胀，而非粗暴全局乘怪攻。
+  const priceStat = good.kind === 'atk' || good.kind === 'def'
+  const cur = (hero && priceStat) ? (hero[good.stat] || 10) : 10
+  const steps = priceStat
+    ? Math.floor(Math.max(0, cur - 10) / CONFIG.SHOP_COST_PER) : 0
+  const cost = CONFIG.SHOP_COST + (priceStat ? CONFIG.SHOP_COST_STEP * steps : 0)
+    + (priceStat && adv ? CONFIG.ADV_SHOP_COST : 0)
   return { kind: good.kind, label: good.label, stat: good.stat,
-    amount, cost: CONFIG.SHOP_COST, tier }
+    amount, cost, tier, adv }
 }
 
 export function shopBuy(prev, kind) {
   const s = clone(prev)
   const ev = []
   if (s.ended) return { state: s, events: ev }
-  const offer = shopOffer(kind || 'atk', s.floor)
+  const offer = shopOffer(kind || 'atk', s.floor, s.hero)
   // v0.13：炸弹是「技能型商品」，没救老者之前商人不会卖
   if (offer.kind === 'bomb' && !(s.hero.flags & FLAG.BOMB_UNLOCK)) {
     ev.push({ t: 'msg', text: '商人：这玩意儿太烈，得先懂行——听说 12F 关着位老者' })
@@ -698,6 +645,16 @@ export const MAGE_GOODS = [
   { kind: 'hp',  label: '生命', stat: 'hp',  amount: 100 }
 ]
 
+// v0.24.0：法师兑换的递增定价对外暴露，供 app.js 显示动态价（与 mageBuy 同源）。
+export function mageOffer(kind, hero) {
+  const g = MAGE_GOODS.find(x => x.kind === kind) || MAGE_GOODS[0]
+  const priceStat = g.kind === 'atk' || g.kind === 'def'
+  const cur = (hero && priceStat) ? (hero[g.stat] || 10) : 10
+  const steps = priceStat ? Math.floor(Math.max(0, cur - 10) / CONFIG.EXP_COST_PER) : 0
+  const cost = CONFIG.EXP_COST + (priceStat ? CONFIG.EXP_COST_STEP * steps : 0)
+  return { ...g, cost }
+}
+
 export function mageBuy(prev, kind) {
   const s = clone(prev)
   const ev = []
@@ -706,15 +663,16 @@ export function mageBuy(prev, kind) {
     ev.push({ t: 'msg', text: '还没有救出法师（8F 房间）' })
     return { state: s, events: ev }
   }
-  const g = MAGE_GOODS.find(x => x.kind === kind) || MAGE_GOODS[0]
-  if ((s.hero.exp || 0) < CONFIG.EXP_COST) {
-    ev.push({ t: 'msg', text: '经验不足（需 ' + CONFIG.EXP_COST + ' EXP，现有 ' + (s.hero.exp || 0) + '）' })
+  const g = mageOffer(kind, s.hero)
+  const cost = g.cost
+  if ((s.hero.exp || 0) < cost) {
+    ev.push({ t: 'msg', text: '经验不足（需 ' + cost + ' EXP，现有 ' + (s.hero.exp || 0) + '）' })
     return { state: s, events: ev }
   }
-  s.hero.exp -= CONFIG.EXP_COST
+  s.hero.exp -= cost
   s.hero[g.stat] += g.amount
   ev.push({
-    t: 'msg', text: '法师施法：' + g.label + ' +' + g.amount + '（-' + CONFIG.EXP_COST + ' EXP）'
+    t: 'msg', text: '法师施法：' + g.label + ' +' + g.amount + '（-' + cost + ' EXP）'
   }, { t: 'save' })
   return { state: s, events: ev }
 }
