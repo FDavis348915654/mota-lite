@@ -217,8 +217,8 @@ ok('v0.19 图鉴有 m10 噬血蝠描述（15% / 堆防 / 先打怪再捡血瓶�
 ok('v0.19 帮助文案说明吸血独立于破防 / 前期精英 / 12F 回落 / 石头人加厚',
   /堆防挡不住/.test(TEXTS.help.rule) && /15%/.test(TEXTS.help.rule) &&
   /前期/.test(TEXTS.help.rule) && /12F 起/.test(TEXTS.help.rule) && /石头人/.test(TEXTS.help.rule))
-ok('v0.24.3 manifest 版本与 version.js 对齐（0.24.3 / v0.24.3）',
-  JSON.parse(readText('assets/manifest.json')).version === '0.24.3' && VERSION === 'v0.24.3')
+ok('v0.24.5 manifest 版本与 version.js 对齐（0.24.5 / v0.24.5）',
+  JSON.parse(readText('assets/manifest.json')).version === '0.24.5' && VERSION === 'v0.24.5')
 
 ok('v0.20 帮助文案说明前期防杀消除 / 合理利用金币与经验',
   /防杀/.test(TEXTS.help.rule) && /合理利用手上的金币与经验/.test(TEXTS.help.rule) &&

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>腕上魔塔 Lite · 在线试玩</title>
   <meta http-equiv="Cache-Control" content="no-cache">
-  <link rel="stylesheet" href="./style.css?r=0.24.3">
+  <link rel="stylesheet" href="./style.css?r=0.24.5">
   <!-- 静态资源 cache-bust：线上响应只有 last-modified、无 Cache-Control，浏览器会长期复用旧 JS 副本，
        导致新版改动（如设置里的振屏开关）在端上一直不生效。用 import map 把全部模块说明符统一映射到
        带版本参数的 URL；参数由 tools/sync_cache_bust.py 从 version.js 的 VERSION 派生（去掉前缀 v），
@@ -14,13 +14,13 @@
   <script type="importmap">
   {
     "imports": {
-      "./app.js": "./app.js?r=0.24.3",
-      "./logic.js": "./logic.js?r=0.24.3",
-      "./tables.js": "./tables.js?r=0.24.3",
-      "./solver.js": "./solver.js?r=0.24.3",
-      "./version.js": "./version.js?r=0.24.3",
-      "./texts.js": "./texts.js?r=0.24.3",
-      "./records.js": "./records.js?r=0.24.3"
+      "./app.js": "./app.js?r=0.24.5",
+      "./logic.js": "./logic.js?r=0.24.5",
+      "./tables.js": "./tables.js?r=0.24.5",
+      "./solver.js": "./solver.js?r=0.24.5",
+      "./version.js": "./version.js?r=0.24.5",
+      "./texts.js": "./texts.js?r=0.24.5",
+      "./records.js": "./records.js?r=0.24.5"
     }
   }
   </script>
@@ -175,8 +175,6 @@
           <h2>怎么玩</h2>
           <p id="helpControls"></p>
           <p id="helpKeys"></p>
-          <p class="dim" id="helpRule"></p>
-          <p class="dim" id="helpOptional"></p>
         </div>
 
         <div class="card">
@@ -283,6 +281,6 @@
       <span id="footNote"></span>
     </footer>
   </div>
-  <script type="module" src="./app.js?r=0.24.3"></script>
+  <script type="module" src="./app.js?r=0.24.5"></script>
 </body>
 </html>

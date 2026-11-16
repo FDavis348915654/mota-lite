@@ -315,10 +315,16 @@ ok('CHANGELOG 保留 v0.24.0 条目（纯静态 / 递增定价 / 逐层精算 / 
     c.note.includes('4F') && c.note.includes('16F') &&
     c.note.includes('真实回放') && c.note.includes('?r=0.24.0')))
 // v0.24.2 成为首条（UI 展示精简 / 详细留文档），v0.24.1 收益文案记录改为「保留该条目」
-ok('CHANGELOG 首条为 v0.24.3 且说明再次精简 / brief / 详细留文档 / 版本链',
-  CHANGELOG[0].v === 'v0.24.3' && CHANGELOG[0].note.includes('精简') &&
-  CHANGELOG[0].note.includes('ruleBrief') && CHANGELOG[0].note.includes('brief') &&
-  CHANGELOG[0].note.includes('文档') && CHANGELOG[0].note.includes('?r=0.24.3'))
+ok('CHANGELOG 首条为 v0.24.5 且说明 2F 剧情修正 / 商队歇脚 / 版本链',
+  CHANGELOG[0].v === 'v0.24.5' && CHANGELOG[0].note.includes('2F') &&
+  CHANGELOG[0].note.includes('商队歇脚') && CHANGELOG[0].note.includes('剧情') &&
+  CHANGELOG[0].note.includes('?r=0.24.5'))
+ok('CHANGELOG 保留 v0.24.4 史实条目（灰色文案移除 / 探索项 / brief）',
+  CHANGELOG.some(c => c.v === 'v0.24.4' && c.note.includes('探索') &&
+    c.note.includes('ruleBrief') && c.note.includes('?r=0.24.4')))
+ok('CHANGELOG 保留 v0.24.3 史实条目（怎么玩描述再次精简 / brief）',
+  CHANGELOG.some(c => c.v === 'v0.24.3' && c.note.includes('ruleBrief') &&
+    c.note.includes('brief') && c.note.includes('?r=0.24.3')))
 ok('CHANGELOG 保留 v0.24.2 史实条目（UI 展示精简 / ruleBrief / 详细留文档）',
   CHANGELOG.some(c => c.v === 'v0.24.2' && c.note.includes('ruleBrief') &&
     c.note.includes('brief') && c.note.includes('文档') && c.note.includes('?r=0.24.2')))
@@ -378,7 +384,7 @@ ok('sync_cache_bust.py 从 VERSION 派生参数且支持 --check',
 
 // ---- v0.20.1 振屏范围 / 振屏开关 / 防御增益：静态防漂移 ----
 const manifest21 = JSON.parse(read('assets/manifest.json'))
-ok('manifest.json version = 0.24.3', manifest21.version === '0.24.3', manifest21.version)
+ok('manifest.json version = 0.24.5', manifest21.version === '0.24.5', manifest21.version)
 ok('logic.js 定义 v0.24.0 纯静态增益（ATK2.0 / DEF1.5 / CAP1.15 / 分段HP 0.6·0.25）且门控已彻底移除',
   /MOB_ATK_GAIN:\s*2\.0/.test(logicSrc) && /MOB_DEF_GAIN:\s*1\.5/.test(logicSrc) &&
   /MOB_DEF_CAP_MULT:\s*1\.15/.test(logicSrc) &&
@@ -399,8 +405,8 @@ ok('texts.js 有 vibOn / vibOff 文案',
 ok('validate_logic.mjs 有 v0.21.0 专项段且已清除 DEF_GAIN 基线隔离',
   read('tools/validate_logic.mjs').includes('=== v0.21.0') &&
   !read('tools/validate_logic.mjs').includes('CONFIG.DEF_GAIN ='))
-ok('validate_assets.mjs 版本对齐已改 0.24.3',
-  read('tools/validate_assets.mjs').includes("version === '0.24.3'"))
+ok('validate_assets.mjs 版本对齐已改 0.24.5',
+  read('tools/validate_assets.mjs').includes("version === '0.24.5'"))
 // ---- v0.14 关卡设计深度：静态防漂移 ----
 const genPy = read('tools/make_levels.py')
 ok('make_levels.py 有隔间 / 宝库 / 精英常量',

@@ -28,10 +28,10 @@ function ok(name, cond, detail) {
 }
 
 console.log('=== 1. 版本链 ===')
-ok('VERSION = v0.24.3', VERSION === 'v0.24.3', VERSION)
-ok('CHANGELOG 首条 = v0.24.3', CHANGELOG[0].v === VERSION)
-ok('manifest = 0.24.3', JSON.parse(read('assets/manifest.json')).version === '0.24.3')
-ok('index.html 9 处 ?r=0.24.3', (read('index.html').match(/\?r=0\.24\.3/g) || []).length === 9)
+ok('VERSION = v0.24.5', VERSION === 'v0.24.5', VERSION)
+ok('CHANGELOG 首条 = v0.24.5', CHANGELOG[0].v === VERSION)
+ok('manifest = 0.24.5', JSON.parse(read('assets/manifest.json')).version === '0.24.5')
+ok('index.html 9 处 ?r=0.24.5', (read('index.html').match(/\?r=0\.24\.5/g) || []).length === 9)
 ok('meta.schema = 12', data.meta.schema === 12)
 ok('生成链 build_tables.py --check 通过',
   (() => { try { execFileSync('python3', ['tools/build_tables.py', '--check'], { cwd: root }); return true } catch { return false } })())

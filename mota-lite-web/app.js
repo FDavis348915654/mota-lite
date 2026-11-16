@@ -1369,9 +1369,8 @@ function injectTexts() {
   $('assetNote').textContent = TEXTS.ui.assetNote
   $('helpControls').textContent = TEXTS.help.controls
   $('helpKeys').textContent = TEXTS.help.keys
-  // v0.24.2：UI 只展示精简版；详细文案仍保留在 TEXTS.help.rule / optional 供文档与校验用
-  $('helpRule').textContent = TEXTS.help.ruleBrief || TEXTS.help.rule
-  $('helpOptional').textContent = TEXTS.help.optionalBrief || TEXTS.help.optional
+  // v0.24.4：玩法规则 / 可选捷径两段灰色文案从 UI 移除，作为玩家探索项不再明示；
+  // TEXTS.help.rule / optional / ruleBrief / optionalBrief 数据源原文全部保留，供文档与校验用
   $('archText').textContent = '本页 import 在线版自己的 logic.js / tables.js / solver.js（单一真源），浏览器里跑的就是那个 resolveStep()。关卡编辑源是 levels/levels.json，由 tools/build_tables.py 生成 tables.js，运行时不读 JSON。像素精灵、战斗动画、文本框剧情、8-bit 音效、全部文案都是本地生成的资源，由配置表与 texts.js 驱动。'
   $('archSub').textContent = '手环端 M1 工程 /workspace/mota-lite/ 已冻结（真机暂缓）。v0.4 起逻辑层分叉，未来移植以在线版为准重新对齐；存档已升 v4（head 16 段，追加经验 exp 与标志位 flags），v1~v3 旧档作废重开。' + FLOORS.length + ' 层整层 13×15 = ' + (W * H) + ' 格全部渲染，.viewport 只裁出 ' + VIEWPORT.cols + '×' + VIEWPORT.rows + ' 一屏，相机由 state.x/y 派生（不进存档）。手环端输入 @swipe → 键盘/点击格子/手势，@system.storage → localStorage。'
   $('abilityHint').textContent = '屏幕下方按钮按进度解锁：首次走到商店旁边交互后出现「购买」（之后随处可开商店），救出 12F 老者后出现「炸弹」；键盘 F / Shift+F / B / C 亦可。金币在商店花，经验找 8F 救出的法师按 30 EXP 一次换属性。飞行器只飞已探索过的楼层。'
