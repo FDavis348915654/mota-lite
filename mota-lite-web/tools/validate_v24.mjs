@@ -12,7 +12,7 @@ import {
   calcBattle, resolveStep, tileAt
 } from '../logic.js'
 import { FLOOR_SCALE, FLOORS, monsterByCh } from '../tables.js'
-import { findSolution } from '../solver.js'
+import { findSolution, findPath } from '../solver.js'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -28,10 +28,10 @@ function ok(name, cond, detail) {
 }
 
 console.log('=== 1. 版本链 ===')
-ok('VERSION = v0.24.0', VERSION === 'v0.24.0', VERSION)
-ok('CHANGELOG 首条 = v0.24.0', CHANGELOG[0].v === VERSION)
-ok('manifest = 0.24.0', JSON.parse(read('assets/manifest.json')).version === '0.24.0')
-ok('index.html 9 处 ?r=0.24.0', (read('index.html').match(/\?r=0\.24\.0/g) || []).length === 9)
+ok('VERSION = v0.24.3', VERSION === 'v0.24.3', VERSION)
+ok('CHANGELOG 首条 = v0.24.3', CHANGELOG[0].v === VERSION)
+ok('manifest = 0.24.3', JSON.parse(read('assets/manifest.json')).version === '0.24.3')
+ok('index.html 9 处 ?r=0.24.3', (read('index.html').match(/\?r=0\.24\.3/g) || []).length === 9)
 ok('meta.schema = 12', data.meta.schema === 12)
 ok('生成链 build_tables.py --check 通过',
   (() => { try { execFileSync('python3', ['tools/build_tables.py', '--check'], { cwd: root }); return true } catch { return false } })())
@@ -175,6 +175,44 @@ for (const [name, strat] of [['对半强化', 'half'], ['全堆防', 'allDef']])
   ok(`v0.24.0 ${name} 首次推进纯物理防杀 ≤ 2 场`, sum(A, 'block') <= 2, `${sum(A, 'block')} 场`)
   ok(`v0.24.0 ${name} 首次推进无「破不了防」`, sum(A, 'unbreak') === 0)
   ok(`v0.24.0 ${name} 变强回头防杀属经典魔塔固有（不误判为失败）`, sum(r.F2, 'block') >= 0)
+}
+
+console.log('\n--- 8. v0.24.1 点击寻路：外层怪未清时里面怪不可达 ---')
+// 复现用户场景：点凹室深处的怪，它四周无可站落脚格；唯一入口被外层怪占据。
+// app.js walkTo 的回退分支若漏传 blockEntities，就会穿越外层怪、先撞外面的怪。
+// 这里直接校验：带 blockEntities 时不可达（修后回退同样带），墙围死角仍可达（历史意图保留）。
+{
+  const rowsBlocked = [
+    '#########', '#.......#', '#..##.#.#', '#P12#...#',
+    '#..##.#.#', '#.......#', '#########'
+  ].map(r => r.split(''))
+  const rowsCorner = [
+    '#########', '#.......#', '#..##.#.#', '#P.2#...#',
+    '#..##.#.#', '#.......#', '#########'
+  ].map(r => r.split(''))
+  const origRows = FLOORS[0].rows
+  try {
+    FLOORS[0].rows = rowsBlocked
+    const sb = newGame(); sb.floor = 0; sb.x = 1; sb.y = 3
+    sb.hero.hp = 99999; sb.hero.atk = 99999; sb.hero.def = 99999
+    const standBlocked = findPath(sb, new Set(['3,3']), { blockEntities: true })
+    ok('v0.24.1 目标怪四周落脚点被外层怪占据时不可达（不会先撞外层怪）',
+      !standBlocked.path || !standBlocked.path.length,
+      standBlocked.path ? standBlocked.path.join(',') : '不可达')
+    // 校验 app.js 回退分支已带 blockEntities（静态防漂移，锁住修复）
+    ok('v0.24.1 app.js 回退寻路带 blockEntities:true（防止穿越外层怪）',
+      /standTargets\.size === 0\)\s*\n\s*r = findPath\(state, new Set\(\[tx \+ ',' \+ ty\]\), \{ blockEntities: true \}\)/.test(read('app.js')))
+
+    FLOORS[0].rows = rowsCorner
+    const sc = newGame(); sc.floor = 0; sc.x = 1; sc.y = 3
+    sc.hero.hp = 99999; sc.hero.atk = 99999; sc.hero.def = 99999
+    const corner = findPath(sc, new Set(['3,3']), { blockEntities: true })
+    ok('v0.24.1 真正的墙围死角仍可走进目标格（保留历史意图）',
+      !!corner.path && corner.path.length > 0,
+      corner.path ? corner.path.join(',') : '不可达')
+  } finally {
+    FLOORS[0].rows = origRows
+  }
 }
 
 console.log('\n' + (fail ? '存在 ' + fail + ' 项失败' : '全部 ' + pass + ' 项断言通过') + '（v0.24.0 专项）\n')

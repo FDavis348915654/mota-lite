@@ -271,6 +271,26 @@ function applyEffect(hero, eff) {
   if (eff.flag) hero.flags = (hero.flags || 0) | eff.flag   // v0.13：任务/解锁标志位
 }
 
+// v0.24.1 新增：把道具 effect 转成「 · 攻击 +10」这样的收益片段，接在拾取 / 救出 /
+// 暗格 / 暗门的 #tip 黄色提示条文本后。数值取自 effect 本身（配置唯一真源），
+// 改 levels.json 后自动跟随；无数值收益的任务道具 / 飞行器 / 图鉴 / 核心返回空串。
+export function effectGainText(eff, name) {
+  if (!eff) return ''
+  const keyName = { y: '黄钥匙', b: '蓝钥匙', r: '红钥匙' }
+  const parts = []
+  // 道具名已含收益标签（如「黄钥匙」）时只写数值，避免「获得 黄钥匙 · 黄钥匙 +1」重复
+  const add = (label, n) => {
+    if (n) parts.push((name && name.indexOf(label) >= 0 ? '' : label + ' ') + '+' + n)
+  }
+  add('攻击', eff.atk)
+  add('防御', eff.def)
+  add('生命', eff.hp)
+  add('金币', eff.gold)
+  add('炸弹', eff.bomb)
+  if (eff.key && eff.n) add(keyName[eff.key] || '钥匙', eff.n)
+  return parts.length ? ' · ' + parts.join(' ') : ''
+}
+
 // v0.13：击杀经验 = 怪物基础 exp × 楼层档（1~7F ×1 / 8~14F ×2 / 15~21F ×3）。
 // 与 shopTier 同口径分档；魔王 exp=0（通关即终局）。
 export function monsterExp(mon, floor) {
@@ -331,7 +351,7 @@ export function resolveStep(prev, direction) {
     if (sec && itemById(sec.item)) applyEffect(s.hero, itemById(sec.item).effect)
     setTile(s, nx, ny, '.')
     ev.push({
-      t: 'msg', text: sec ? '撞开暗门：发现 ' + sec.name : '撞开暗门：后面是空墙'
+      t: 'msg', text: sec ? '撞开暗门：发现 ' + sec.name + effectGainText(itemById(sec.item).effect, sec.name) : '撞开暗门：后面是空墙'
     }, { t: 'save' })
     return { state: s, events: ev }
   }
@@ -452,7 +472,7 @@ export function resolveStep(prev, direction) {
     setTile(s, nx, ny, '.')
     // 被救的法师 / 盗贼走同一个「一次性奖励」通道，只是文案是「救出」而不是「获得」
     const npc = item.id.indexOf('npc_') === 0
-    ev.push({ t: 'msg', text: (npc ? '已救出 ' : '获得 ') + item.name }, { t: 'save' })
+    ev.push({ t: 'msg', text: (npc ? '已救出 ' : '获得 ') + item.name + effectGainText(item.effect, item.name) }, { t: 'save' })
     // v0.11：拾取 / 救出后停在原地，不踩进实体格（与战斗一致）。
     return { state: s, events: ev }
   }
@@ -463,7 +483,7 @@ export function resolveStep(prev, direction) {
     if (h && itemById(h.item)) {
       applyEffect(s.hero, itemById(h.item).effect)
       setTile(s, nx, ny, '.')
-      ev.push({ t: 'msg', text: '发现隐藏的 ' + h.name }, { t: 'save' })
+      ev.push({ t: 'msg', text: '发现隐藏的 ' + h.name + effectGainText(itemById(h.item).effect, h.name) }, { t: 'save' })
     } else {
       setTile(s, nx, ny, '.')
       ev.push({ t: 'msg', text: '这里什么也没有' }, { t: 'save' })

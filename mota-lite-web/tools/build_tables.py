@@ -11,6 +11,8 @@
     python3 tools/build_tables.py --check      # 只校验「生成结果 == 现有 tables.js」，不写盘
     python3 tools/build_tables.py --stdout     # 打印到标准输出，供 diff / 调试
 
+# v0.24.1：拾取提示条收益文案由 logic.js 从 effect 动态生成，关卡表 / schema 不变。
+
 本脚本只依赖标准库，输出确定（同一份 JSON 永远生成同样的字节），
 便于 tools/validate_levels.mjs 做防漂移断言。
 """
