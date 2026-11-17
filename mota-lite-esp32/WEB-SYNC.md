@@ -65,6 +65,10 @@ python tools/check_sync.py        # 静态检查：快照/FLAG/剧情 key/tileMa
 **跳过第一条** → 规则/关卡/文案全部停在旧版本，但编译照样成功。
 **跳过第二条** → 图、音、字停在旧版本，新怪可能渲染成空白。
 
+**跨多个版本同步时，额外人工核对一遍 C 侧调用的 JS 接口签名**：
+`check_sync.py` 只能查常量（FLAG / 剧情 key / 字符 / 字库），查不出「函数多了一个参数」。
+这轮 v0.17 → v0.24.5 就漏了 `shopOffer`/`mageOffer`/`scaledMon` 的 `hero` 参数，症状是价格与数值静默不符。
+
 ---
 
 ## 5. 静默风险（不报错但会错）
@@ -73,6 +77,7 @@ python tools/check_sync.py        # 静态检查：快照/FLAG/剧情 key/tileMa
 |---|---|---|
 | **FLAG 位值漂移** | `logic.js` 的 `FLAG` 中间插入新位，C 里 5 个宏（1 / 2 / 16 / 128 / 256）是**抄的常量** | 炸弹按钮不出现 / 提前解锁，无任何报错 |
 | **tileMap 缺字符** | 新增怪物或道具字符，`sprites.json` 的 `tileMap` 没加 | 该格渲染成空帧（`SPR_NONE`） |
+| **JS 接口多一个参数** | `shopOffer(kind, floor, hero)` / `scaledMon(mon, floor, hero)` / `mageOffer(kind, hero)` 的 `hero` 是 v0.18~v0.24 陆续加的 | C 少传一个参数**不报错**，但：商店面板永远显示最低价（实际按当前属性扣更多）、图鉴怪物数值偏弱（没算能量护盾 boost）、法师价格不递增。**编译和运行都正常，只是数字对不上** |
 | **剧情 key 改名** | C 里硬编码 19 个 key（`intro`/`elder`/`fly`/`lockpick`/`moneybag`/`thief_*`/`fairy_*`/`mage_free`/`sealed_door`/`elite_hint`/`core_hint`/`win`/`lose`） | 弹层空白或不出 |
 | **生僻字** | 文案用到 GB2312 一级 3,755 字以外的字 | 该字留半个字宽，不报错 |
 | **新界面元素** | web 新增面板/按钮/手势 | ESP32 完全不知道，需人工移植 |
@@ -83,7 +88,7 @@ python tools/check_sync.py        # 静态检查：快照/FLAG/剧情 key/tileMa
 
 ---
 
-## 6. 已验证的一致性（v0.17.0）
+## 6. 已验证的一致性（web v0.24.5）
 
 | 项 | 结果 |
 |---|---|

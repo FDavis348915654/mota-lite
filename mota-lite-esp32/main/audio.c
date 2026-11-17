@@ -187,3 +187,12 @@ bool audio_muted(void)
 {
     return s_muted;
 }
+
+// 供设置持久化恢复用：直接设定状态，不做取反
+void audio_set_muted(bool muted)
+{
+    s_muted = muted;
+    if (s_dev) {
+        esp_codec_dev_set_out_mute(s_dev, s_muted);
+    }
+}

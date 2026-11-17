@@ -42,6 +42,7 @@ extern const uint8_t bundle_end[] asm("_binary_logic_bundle_js_end");
 #define NVS_KEY_BEST  "rbest"
 #define NVS_KEY_WINS  "rwins"
 #define NVS_KEY_MIN   "rmin"
+#define NVS_KEY_OPTS  "opts"   // bit0 音效关 / bit1 战斗动画关 / bit2 振屏关
 
 // ---- 布局（480x480：7x9 地图视口 + 186px 侧栏 + 102px 底栏）----
 #define HUD_X         (SIDE_X + 4)     // 298
@@ -146,6 +147,7 @@ static JSValue s_fn_bomb = {0};
 static JSValue s_fn_shop_offer = {0};
 static JSValue s_fn_shop_buy = {0};
 static JSValue s_fn_mage_buy = {0};
+static JSValue s_fn_mage_offer = {0};
 static JSValue s_fn_hidden = {0};
 static JSValue s_fn_secret = {0};
 static JSValue s_fn_thief = {0};
@@ -159,6 +161,8 @@ static char s_act_text[320];
 static bool s_dirty_save = false;
 static bool s_dirty_frame = false;
 static bool s_anim_on = true;
+// 振屏开关：web 是手机马达，这块板用屏幕边缘闪烁替代（handle_events 的 vibrate 分支）
+static bool s_vibrate_on = true;
 static int s_hero_frame = 0;
 static int s_steps = 0;
 static bool s_win_counted = false;
@@ -190,6 +194,15 @@ static int s_sel_c = -1, s_sel_r = -1;
 // 按钮按下态：触发后 180ms 内高亮，对应 web 的 .action-btn:active
 static int s_btn_hot = -1;
 static TickType_t s_btn_hot_until = 0;
+
+// v0.21：动画期间点击不再丢弃，排队到动画结束执行（web 的 pendingInteract）
+static struct {
+    bool valid;
+    int x, y;
+} s_queued_tap;
+
+// 首次撞商店：先弹「商人获救道谢」，点继续后再开交易面板
+static bool s_pending_shop = false;
 
 // 当前按下点（只用于按钮的"按住"高亮，不再画圆圈）
 static struct {
@@ -600,7 +613,9 @@ static void handle_events(JSValue events)
         } else if (type && strcmp(type, "save") == 0) {
             s_dirty_save = true;
         } else if (type && strcmp(type, "vibrate") == 0) {
-            s_flash_until = xTaskGetTickCount() + pdMS_TO_TICKS(110);
+            if (s_vibrate_on) {
+                s_flash_until = xTaskGetTickCount() + pdMS_TO_TICKS(110);
+            }
         }
 
         if (type) {
@@ -666,6 +681,44 @@ static bool load_from_nvs(void)
     free(buf);
     nvs_close(h);
     return ok;
+}
+
+// 设置项持久化：音效 / 战斗动画 / 振屏，一个字节三个位
+static void settings_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    uint8_t v = 0;
+    nvs_get_u8(h, NVS_KEY_OPTS, &v);
+    nvs_close(h);
+    audio_set_muted((v & 1) != 0);
+    s_anim_on = (v & 2) == 0;
+    s_vibrate_on = (v & 4) == 0;
+    ESP_LOGI(TAG, "设置：音效%s 动画%s 振屏%s",
+             audio_muted() ? "关" : "开", s_anim_on ? "开" : "关", s_vibrate_on ? "开" : "关");
+}
+
+static void settings_save(void)
+{
+    uint8_t v = 0;
+    if (audio_muted()) {
+        v |= 1;
+    }
+    if (!s_anim_on) {
+        v |= 2;
+    }
+    if (!s_vibrate_on) {
+        v |= 4;
+    }
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_set_u8(h, NVS_KEY_OPTS, v);
+    nvs_commit(h);
+    nvs_close(h);
 }
 
 static void records_load(void)
@@ -774,6 +827,7 @@ void game_init(void)
     s_fn_shop_offer = JS_GetPropertyStr(s_ctx, s_logic, "shopOffer");
     s_fn_shop_buy = JS_GetPropertyStr(s_ctx, s_logic, "shopBuy");
     s_fn_mage_buy = JS_GetPropertyStr(s_ctx, s_logic, "mageBuy");
+    s_fn_mage_offer = JS_GetPropertyStr(s_ctx, s_logic, "mageOffer");
     s_fn_hidden = JS_GetPropertyStr(s_ctx, s_logic, "hiddenAt");
     s_fn_secret = JS_GetPropertyStr(s_ctx, s_logic, "secretAt");
     s_fn_thief = JS_GetPropertyStr(s_ctx, s_logic, "thiefStage");
@@ -788,6 +842,7 @@ void game_init(void)
     s_exp_cost = js_get_int(cfg, "EXP_COST");
     JS_FreeValue(s_ctx, cfg);
 
+    settings_load();
     records_load();
 
     ESP_LOGI(TAG, "QuickJS 就绪，逻辑包 %d 字节；商品 %d / 法师 %d；记录 最高%dF 通关%d次",
@@ -904,13 +959,17 @@ static void build_shop_rows(void)
 {
     s_ov.rows = 0;
     for (int i = 0; i < s_shop_n; i++) {
-        JSValue args[2] = {
+        // v0.24 起 shopOffer(kind, floor, hero)：hero 用于递增定价，
+        // 不传的话面板永远显示 20G，实际结算按当前属性扣更多，两边对不上
+        JSValue args[3] = {
             JS_NewString(s_ctx, s_shop_goods[i].kind),
             JS_NewInt32(s_ctx, s_hud.floor),
+            JS_GetPropertyStr(s_ctx, s_state, "hero"),
         };
-        JSValue o = JS_Call(s_ctx, s_fn_shop_offer, s_logic, 2, args);
+        JSValue o = JS_Call(s_ctx, s_fn_shop_offer, s_logic, 3, args);
         JS_FreeValue(s_ctx, args[0]);
         JS_FreeValue(s_ctx, args[1]);
+        JS_FreeValue(s_ctx, args[2]);
         if (JS_IsException(o)) {
             js_dump_error("shopOffer");
             continue;
@@ -953,6 +1012,27 @@ static void open_shop(void)
     mark_dirty();
 }
 
+// 法师兑换价由 logic 按 hero 属性现算（越买越贵），C 侧不能自己写死
+static int mage_cost_of(const char *kind)
+{
+    if (!s_ctx || !JS_IsObject(s_state)) {
+        return s_exp_cost;
+    }
+    JSValue args[2] = {JS_NewString(s_ctx, kind),
+                       JS_GetPropertyStr(s_ctx, s_state, "hero")};
+    JSValue o = JS_Call(s_ctx, s_fn_mage_offer, s_logic, 2, args);
+    int cost = s_exp_cost;
+    if (JS_IsException(o)) {
+        js_dump_error("mageOffer");
+    } else if (JS_IsObject(o)) {
+        cost = js_get_int(o, "cost");
+    }
+    JS_FreeValue(s_ctx, args[0]);
+    JS_FreeValue(s_ctx, args[1]);
+    JS_FreeValue(s_ctx, o);
+    return cost;
+}
+
 static void open_mage(void)
 {
     s_ov.rows = 0;
@@ -963,10 +1043,11 @@ static void open_mage(void)
         JS_FreeValue(s_ctx, o);
 
         menu_row_t *r = &s_ov.row[s_ov.rows++];
+        int cost = mage_cost_of(s_mage_goods[i].kind);
         snprintf(r->label, sizeof(r->label), "%s", s_mage_goods[i].label);
         snprintf(r->effect, sizeof(r->effect), "+%d", amount);
-        snprintf(r->cost, sizeof(r->cost), "%dEXP", s_exp_cost);
-        r->affordable = s_hud.exp >= s_exp_cost;
+        snprintf(r->cost, sizeof(r->cost), "%dEXP", cost);
+        r->affordable = s_hud.exp >= cost;
     }
     JS_FreeValue(s_ctx, arr);
 
@@ -1027,9 +1108,13 @@ static void build_codex(void)
             }
             JS_FreeValue(s_ctx, nv);
 
-            JSValue sargs[2] = {mon, JS_NewInt32(s_ctx, s_hud.floor)};
-            JSValue sc = JS_Call(s_ctx, s_fn_scaled, s_logic, 2, sargs);
+            // v0.18 起 scaledMon(mon, floor, hero)：未灌顶期间要叠加能量护盾 boost，
+            // 不传 hero 图鉴显示的是基线值，比实际战斗中的怪弱一大截
+            JSValue sargs[3] = {mon, JS_NewInt32(s_ctx, s_hud.floor),
+                                JS_GetPropertyStr(s_ctx, s_state, "hero")};
+            JSValue sc = JS_Call(s_ctx, s_fn_scaled, s_logic, 3, sargs);
             JS_FreeValue(s_ctx, sargs[1]);
+            JS_FreeValue(s_ctx, sargs[2]);
             if (!JS_IsException(sc) && JS_IsObject(sc)) {
                 row->hp = js_get_int(sc, "hp");
                 row->atk = js_get_int(sc, "atk");
@@ -1195,7 +1280,14 @@ static void after_action(char target, int tx, int ty, int flags_before, int thie
     records_update();
 
     if (target == 'N') {
-        open_shop();
+        // v0.21：首次撞商店 = 救出被囚的商人，先弹一次道谢剧情；
+        // story_seen 去重，之后每次撞都直接开交易面板
+        if (story_seen("shop_free")) {
+            open_shop();
+        } else {
+            s_pending_shop = true;
+            queue_story("shop_free");
+        }
     }
 
     if (!s_act_text[0]) {
@@ -1364,9 +1456,13 @@ static void buy_mage(int idx)
     read_grid();
     bool ok = strstr(s_act_text, "施法") != NULL;
     audio_play(ok ? "powerup" : "click");
-    for (int i = 0; i < s_ov.rows; i++) {
-        s_ov.row[i].affordable = s_hud.exp >= s_exp_cost;
+    // 买完价格会涨（越买越贵），必须逐项重算，否则显示的还是成交前的价
+    for (int i = 0; i < s_ov.rows && i < s_mage_n; i++) {
+        int cost = mage_cost_of(s_mage_goods[i].kind);
+        snprintf(s_ov.row[i].cost, sizeof(s_ov.row[i].cost), "%dEXP", cost);
+        s_ov.row[i].affordable = s_hud.exp >= cost;
     }
+    s_exp_cost = mage_cost_of("atk");
     mark_dirty();
 }
 
@@ -1924,16 +2020,24 @@ static void panel_begin(const char *title, const char *sub)
     gfx_text(OV_X + 20, OV_Y + 18, title, COL_GOLD, 300);
     if (sub && sub[0]) {
         int w = gfx_text_width(sub);
-        gfx_text(OV_X + OV_W - 20 - w, OV_Y + 18, sub, COL_TEXT_DIM, 200);
+        int tw = gfx_text_width(title);
+        int avail = OV_W - 40 - tw - 12;   // 标题右侧到面板内边距之间
+        int sx = OV_X + OV_W - 20 - w;
+        if (sx < OV_X + 20 + tw + 12) {
+            sx = OV_X + 20 + tw + 12;
+        }
+        gfx_text(sx, OV_Y + 18, sub, COL_TEXT_DIM, avail > 0 ? avail : 40);
     }
 }
 
 static void render_story(void)
 {
     panel_begin(s_ov.title, NULL);
-    gfx_text_wrap(OV_X + 20, OV_Y + 62, s_ov.body, COL_TEXT, OV_W - 40, 26, 9);
+    // 最长剧情 shop_free 有 171 字；9 行 × 16 字只有 144，会被截成「...」
+    // 11 行 × 17 字 = 187 字，行高 25 刚好在按钮上方收住
+    gfx_text_wrap(OV_X + 12, OV_Y + 58, s_ov.body, COL_TEXT, OV_W - 24, 24, 11);
 
-    int bx = OV_X + 20, by = OV_Y + OV_H - 56, bw = OV_W - 40, bh = 40;
+    int bx = OV_X + 20, by = OV_Y + OV_H - 50, bw = OV_W - 40, bh = 38;
     draw_btn(bx, by, bw, bh, COL_BORDER);
     // 字库没有 ▸，用两个汉字 + 手绘三角，避免缺字方块
     const char *cont = "继续";
@@ -1951,7 +2055,9 @@ static void render_menu(void)
     if (s_ov.kind == OV_SHOP) {
         snprintf(sub, sizeof(sub), "金币 %d", s_hud.gold);
     } else {
-        snprintf(sub, sizeof(sub), "经验 %d / %d", s_hud.exp, s_exp_cost);
+        // 面板右上只剩约 180px，写「经验 100 / 下次 45」会被裁；
+        // 递增价已经逐行显示在右侧，副标题只留当前经验
+        snprintf(sub, sizeof(sub), "经验 %d", s_hud.exp);
     }
     panel_begin(s_ov.title, sub);
 
@@ -2037,6 +2143,11 @@ static void render_settings(void)
 
     y += 48;
     snprintf(buf, sizeof(buf), "战斗动画：%s", s_anim_on ? "开" : "关");
+    draw_row(ROW_X, y, ROW_W, 42);
+    gfx_text(ROW_X + 12, y + 9, buf, COL_TEXT, ROW_W - 24);
+
+    y += 48;
+    snprintf(buf, sizeof(buf), "振屏：%s", s_vibrate_on ? "开" : "关");
     draw_row(ROW_X, y, ROW_W, 42);
     gfx_text(ROW_X + 12, y + 9, buf, COL_TEXT, ROW_W - 24);
 
@@ -2181,12 +2292,18 @@ static void tap_overlay(int px, int py)
 {
     switch (s_ov.kind) {
     case OV_STORY: {
-        int bx = OV_X + 20, by = OV_Y + OV_H - 56, bw = OV_W - 40, bh = 40;
+        int bx = OV_X + 20, by = OV_Y + OV_H - 50, bw = OV_W - 40, bh = 38;
         if (px >= bx && px < bx + bw && py >= by && py < by + bh) {
             flash_btn(bx, by, bw, bh);
             s_ov.kind = OV_NONE;
             audio_play("click");
             mark_dirty();
+            // 首次商店的道谢剧情看完，紧接着打开交易面板（web 的队列行为）
+            if (s_pending_shop && s_story_qn == 0) {
+                s_pending_shop = false;
+                open_shop();
+                break;
+            }
             if (s_story_qn > 0) {
                 show_next_story();
             }
@@ -2230,6 +2347,7 @@ static void tap_overlay(int px, int py)
         if (py >= y && py < y + 42) {
             flash_btn(ROW_X, y, ROW_W, 42);
             audio_toggle_mute();
+            settings_save();
             audio_play("click");
             mark_dirty();
             return;
@@ -2238,6 +2356,19 @@ static void tap_overlay(int px, int py)
         if (py >= y && py < y + 42) {
             flash_btn(ROW_X, y, ROW_W, 42);
             s_anim_on = !s_anim_on;
+            settings_save();
+            audio_play("click");
+            mark_dirty();
+            return;
+        }
+        y += 48;
+        if (py >= y && py < y + 42) {
+            flash_btn(ROW_X, y, ROW_W, 42);
+            s_vibrate_on = !s_vibrate_on;
+            if (!s_vibrate_on) {
+                s_flash_until = 0;   // 关掉时立刻停掉正在闪的边框
+            }
+            settings_save();
             audio_play("click");
             mark_dirty();
             return;
@@ -2317,6 +2448,10 @@ void game_tap(int px, int py)
     ESP_LOGD(TAG, "tap %d,%d ov=%d anim=%d ended=%d pos=%d,%d", px, py, (int)s_ov.kind,
              (int)s_anim.active, s_hud.ended, s_hud.x, s_hud.y);
     if (s_anim.active) {
+        // v0.21：不再丢弃——连点时记下最后一个位置，动画结束立刻执行
+        s_queued_tap.valid = true;
+        s_queued_tap.x = px;
+        s_queued_tap.y = py;
         return;
     }
     mark_dirty();
@@ -2400,6 +2535,9 @@ void game_debug_state(char *buf, int n)
              s_hud.gold, s_hud.key_y, s_hud.key_b, s_hud.key_r, s_steps,
              s_hud.ended, (unsigned)s_hud.flags, (int)s_ov.kind,
              s_cam_px, s_cam_py, (int)s_touch.down, s_touch.x, s_touch.y);
+    // 追加闪烁与开关状态：闪烁窗口只有 110ms，串口抓帧抓不到，只能靠这个判断
+    int n2 = strlen(buf);
+    snprintf(buf + n2, n - n2, " flash%d vib%d", game_flash_active(), (int)s_vibrate_on);
 }
 
 static TickType_t s_anim_last_frame = 0;
@@ -2450,6 +2588,14 @@ void game_tick(void)
             s_anim.active = false;
             read_grid();
             show_next_story();
+            // 排队点击：动画一结束就执行；若刚弹出剧情则丢弃，先让玩家读完
+            if (s_queued_tap.valid) {
+                int qx = s_queued_tap.x, qy = s_queued_tap.y;
+                s_queued_tap.valid = false;
+                if (s_ov.kind == OV_NONE) {
+                    game_tap(qx, qy);
+                }
+            }
             mark_dirty();
         } else if (now - s_anim_last_frame >= pdMS_TO_TICKS(ANIM_FRAME_MS)) {
             s_anim_last_frame = now;
@@ -2542,6 +2688,11 @@ bool game_load_text(const char *text)
     s_story_qn = 0;
     s_steps = 0;
     s_anim.active = false;
+    s_queued_tap.valid = false;
+    s_pending_shop = false;
+    // 清掉上一条消息：否则读档后底栏还挂着上一个场景的提示（调试时特别容易混淆）
+    s_msg[0] = '\0';
+    s_act_text[0] = '\0';
     stop_auto();
     s_cam_floor = -1;
     s_sel_c = s_sel_r = -1;

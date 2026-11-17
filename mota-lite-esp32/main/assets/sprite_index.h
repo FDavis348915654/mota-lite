@@ -46,9 +46,10 @@
 #define SPR_ELITE        40
 #define SPR_FAIRY        41
 #define SPR_CORE         42
-#define SPR_FX_HIT       43
-#define SPR_FX_BOOM      44
-#define SPR_FX_PICK      45
+#define SPR_DRAIN        43
+#define SPR_FX_HIT       44
+#define SPR_FX_BOOM      45
+#define SPR_FX_PICK      46
 
-#define SPR_COUNT 46
+#define SPR_COUNT 47
 #define SPR_NONE  -1

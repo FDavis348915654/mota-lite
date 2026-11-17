@@ -50,6 +50,11 @@ def check_bundle():
         print('  ✓ 打包快照与上游一致 (%d 字节)' % len(bundle.encode('utf-8')))
 
 
+# 这两个位只用于 logic 内部的「是否持有任务道具」，C 侧靠 thiefStage() 推进盗贼线，
+# 不需要单独感知；web 也没有把它们的数值暴露给 UI。
+FLAG_INTERNAL_ONLY = {'LOCKPICK', 'MONEYBAG'}
+
+
 def check_flags():
     """C 里的 FLAG 位值是抄的常量，web 一旦插入新位就会错位。"""
     logic = read(os.path.join(WEB, 'logic.js'))
@@ -74,20 +79,45 @@ def check_flags():
         elif want != val:
             note('flag', 'FLAG_%s: C=%d, logic.js=%d' % (name, val, want))
             bad += 1
+    # 反向：web 新增的位如果不进 C，会出现「以为同步了其实没有」
+    for name in sorted(flags):
+        if name in FLAG_INTERNAL_ONLY:
+            continue
+        if name not in cdefs:
+            note('flag', 'logic.js 的 FLAG.%s=%d 在 game.c 里没有对应宏' % (name, flags[name]))
+            bad += 1
     if not bad:
-        print('  ✓ %d 个 FLAG 位值与 logic.js 一致' % len(cdefs))
+        print('  ✓ %d 个 FLAG 位值与 logic.js 双向一致' % len(flags))
+
+
+# 这三类由 C 侧按坐标动态拼 key，不参与「固定 key 是否被触发」的检查
+DYNAMIC_STORY_PREFIX = ('floor_', 'hidden_', 'secret_')
+# 交易面板由 C 自绘 render_menu 承载，不复用 web 的剧情正文；
+# bomb 剧情在 web 里也没有触发点（死条目）。这两类不算缺失。
+PANEL_STORY_KEYS = {'shop', 'shop_adv', 'mage', 'bomb'}
 
 
 def check_story_keys():
-    """C 侧硬编码 17 个剧情 key，web 改名会让弹层空白。"""
+    """双向：C 用的 key 必须存在；web 的固定 key 也要被 C 触发，否则内容没同步。"""
     c = read(os.path.join(MAIN, 'game.c'))
     keys = sorted(set(re.findall(r'queue_story\("([A-Za-z_0-9]+)"\)', c)))
     texts = read(os.path.join(WEB, 'texts.js'))
     missing = [k for k in keys if not re.search(r'\b%s\s*:\s*\{' % re.escape(k), texts)]
     for k in missing:
         note('story', 'queue_story("%s") 在 texts.js 里没有对应条目' % k)
-    if not missing:
-        print('  ✓ %d 个剧情 key 都能在 texts.js 找到' % len(keys))
+
+    # 只取 story 段里的 4 空格缩进条目，避免命中其它段落
+    body = texts[texts.index('story:'):]
+    web_keys = set(re.findall(r'^ {4}([a-z_0-9]+):\s*\{', body, re.M))
+    untriggered = sorted(
+        k for k in web_keys
+        if not k.startswith(DYNAMIC_STORY_PREFIX) and k not in PANEL_STORY_KEYS and k not in keys
+    )
+    for k in untriggered:
+        note('story', 'texts.js 的 %s 剧情在 game.c 里没有触发点' % k)
+
+    if not missing and not untriggered:
+        print('  ✓ %d 个固定剧情 key 双向一致（web 共 %d 条）' % (len(keys), len(web_keys)))
 
 
 def check_tilemap():

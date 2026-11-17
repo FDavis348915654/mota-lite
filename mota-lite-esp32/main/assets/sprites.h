@@ -8,7 +8,7 @@
 #include "sprite_index.h"
 
 #define SPRITE_TILE   28
-#define SPRITE_COUNT  46
+#define SPRITE_COUNT  47
 #define SPRITE_PIXELS (28 * 28)
 #define SPRITE_ALPHA_BYTES 98
 

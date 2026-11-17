@@ -6,7 +6,7 @@
 
 #include "sprites.h"
 
-#define TILEMAP_COUNT 43
+#define TILEMAP_COUNT 44
 
 extern const int16_t g_tilemap_keys[TILEMAP_COUNT];
 extern const int16_t g_tilemap_spr[TILEMAP_COUNT];

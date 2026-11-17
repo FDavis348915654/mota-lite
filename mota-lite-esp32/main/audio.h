@@ -19,3 +19,6 @@ void audio_play(const char *name);
 bool audio_toggle_mute(void);
 
 bool audio_muted(void);
+
+// 直接设定静音状态（设置项从 NVS 恢复时用）
+void audio_set_muted(bool muted);
